@@ -1,0 +1,6 @@
+@ClickView_HostAddress = http://localhost:5133
+
+GET {{ClickView_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
