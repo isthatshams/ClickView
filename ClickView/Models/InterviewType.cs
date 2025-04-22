@@ -1,6 +1,6 @@
 ﻿namespace ClickView.Models
 {
-    public enum ExamType
+    public enum InterviewType
     {
         Chat,
         Voice
