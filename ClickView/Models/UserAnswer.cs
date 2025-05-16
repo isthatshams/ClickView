@@ -21,5 +21,7 @@ namespace ClickView.Models
         public Interview Interview { get; set; }
         public int? EvaluationScore { get; set; }
         public string? EvaluationFeedback { get; set; }
+        public byte[]? AudioData { get; set; }
+        public string? TranscribedText { get; set; }
     }
 }
