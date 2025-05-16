@@ -49,5 +49,28 @@ app.UseAuthentication(); // must come before UseAuthorization
 app.UseAuthorization();
 
 app.MapControllers();
+using (var scope = app.Services.CreateScope())
+{
+    var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+    var retries = 10;
+    while (retries > 0)
+    {
+        try
+        {
+            dbContext.Database.Migrate();
+            Console.WriteLine("Database migrated.");
+            break;
+        }
+        catch (Exception ex)
+        {
+            retries--;
+            Console.WriteLine($"DB not ready. Retries left: {retries}");
+            Console.WriteLine(ex.Message);
+            Thread.Sleep(5000); // wait 5 seconds
+        }
+    }
+}
+
 
 app.Run();

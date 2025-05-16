@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: clickviewdb
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  clickview-api:
+    build:
+      context: ./ClickView
+    depends_on:
+      - mysql
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ConnectionStrings__DefaultConnection=server=mysql;port=3306;database=clickviewdb;user=root;password=root    
+
+volumes:
+  mysql_data:
