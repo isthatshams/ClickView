@@ -1,5 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore.Metadata.Internal;
-using System.ComponentModel.DataAnnotations;
+﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 
 namespace ClickView.Models
@@ -8,21 +7,24 @@ namespace ClickView.Models
     {
         [Key]
         public int InterviewId { get; set; }
-        public InterviewType InterviewType { get; set; } // Chat or Voice
+
+        public InterviewType InterviewType { get; set; }
+
         public double InterviewMark { get; set; }
+        public DateTime StartedAt { get; set; } = DateTime.UtcNow;
 
-        //User Connection
-        [ForeignKey(nameof(UserId))]
-        public int UserId { get; set; } //Foreign Key
-        public User? User { get; set; }
+        [ForeignKey(nameof(User))]
+        public int UserId { get; set; }
 
-        //Questions Connection
-        public IEnumerable<Question> Questions { get; set; }
+        public User User { get; set; }
 
-        //UserAnswer Connection
-        public IEnumerable<UserAnswer> UserAnswers { get; set; }
+        [ForeignKey(nameof(CV))]
+        public int? CvId { get; set; } // ✅ Optional link to CV used
+        public CV? CV { get; set; }
 
-        //RefrencedAnswer Connection
-        public IEnumerable<RefrencedAnswer> RefrencedAnswer { get; set; }
+        public List<Question> Questions { get; set; } = new();
+
+        public List<UserAnswer> UserAnswers { get; set; } = new();
+
     }
 }

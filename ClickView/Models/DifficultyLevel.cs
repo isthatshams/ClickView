@@ -5,6 +5,6 @@
         Internship,
         Junior,
         Mid,
-        Seniour,
+        Senior
     }
 }
