@@ -8,6 +8,8 @@ using ClickView.Models;
 using ClickView.DTOs;
 using UglyToad.PdfPig;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
+using Microsoft.AspNetCore.Authorization;
 
 namespace ClickView.Controllers
 {
@@ -48,16 +50,64 @@ namespace ClickView.Controllers
         }
 
         [HttpPost("login")]
-        public IActionResult Login(UserLoginDto dto)
+        public async Task<IActionResult> Login([FromBody] UserLoginDto dto)
         {
-            var user = _db.Users.FirstOrDefault(u => u.Email == dto.Email);
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == dto.Email);
             if (user == null || user.PasswordHash != HashPassword(dto.Password))
                 return Unauthorized("Invalid email or password.");
 
-            var token = GenerateJwtToken(user);
-            return Ok(new { message = "Login successful", token });
+            var accessToken = GenerateJwtToken(user);
+            var refreshToken = GenerateRefreshToken();
+
+            user.RefreshToken = refreshToken;
+            user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
+            await _db.SaveChangesAsync();
+
+            return Ok(new
+            {
+                message = "Login successful",
+                accessToken = accessToken,
+                refreshToken = refreshToken,
+                expiresIn = 3600 // optional: seconds until accessToken expires
+            });
+        }
+        [Authorize]
+        [HttpPost("logout")]
+        public async Task<IActionResult> Logout()
+        {
+            var userId = int.Parse(User.FindFirstValue("userId")!);
+            var user = await _db.Users.FindAsync(userId);
+
+            if (user == null)
+                return NotFound("User not found.");
+
+            user.RefreshToken = null;
+            user.RefreshTokenExpiryTime = null;
+            await _db.SaveChangesAsync();
+
+            return Ok(new { message = "Logged out and refresh token revoked." });
         }
 
+        [HttpPost("refresh-token")]
+        public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest request)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.RefreshToken == request.RefreshToken);
+            if (user == null || user.RefreshTokenExpiryTime <= DateTime.UtcNow)
+                return Unauthorized("Invalid or expired refresh token.");
+
+            var newAccessToken = GenerateJwtToken(user);
+            var newRefreshToken = GenerateRefreshToken();
+
+            user.RefreshToken = newRefreshToken;
+            user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
+            await _db.SaveChangesAsync();
+
+            return Ok(new
+            {
+                accessToken = newAccessToken,
+                refreshToken = newRefreshToken
+            });
+        }
         private string HashPassword(string password)
         {
             using var sha256 = System.Security.Cryptography.SHA256.Create();
@@ -152,6 +202,15 @@ namespace ClickView.Controllers
 
             return Ok(cvs);
         }
+        private static string GenerateRefreshToken()
+        {
+            var randomBytes = new byte[64];
+            using var rng = RandomNumberGenerator.Create();
+            rng.GetBytes(randomBytes);
+            return Convert.ToBase64String(randomBytes);
+        }
+       
+
 
     }
 }

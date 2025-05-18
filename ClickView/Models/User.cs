@@ -18,7 +18,8 @@ namespace ClickView.Models
 
         [Required]
         public string PasswordHash { get; set; }
-
+        public string? RefreshToken { get; set; }
+        public DateTime? RefreshTokenExpiryTime { get; set; }
         public bool IsActive { get; set; }
 
         public List<Interview> Interviews { get; set; } = new();
