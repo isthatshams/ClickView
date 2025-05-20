@@ -10,6 +10,8 @@ using UglyToad.PdfPig;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
+using System.Net.Mail;
+using System.Net;
 
 namespace ClickView.Controllers
 {
@@ -27,7 +29,7 @@ namespace ClickView.Controllers
         }
 
         [HttpPost("register")]
-        public IActionResult Register(UserRegisterDto dto)
+        public async Task<IActionResult> Register(UserRegisterDto dto)
         {
             if (_db.Users.Any(u => u.Email == dto.Email))
                 return BadRequest("Email is already registered.");
@@ -44,7 +46,14 @@ namespace ClickView.Controllers
             };
 
             _db.Users.Add(user);
-            _db.SaveChanges();
+
+            //to generate a 5 digit code
+            var verificationCode = new Random().Next(10000, 99999).ToString();
+            user.EmailVerificationCode = verificationCode;
+            user.VerificationCodeExpiry = DateTime.UtcNow.AddMinutes(10);
+
+            await _db.SaveChangesAsync();
+            await SendVerificationEmail(user.Email, verificationCode);
 
             return Ok(new { message = "User registered successfully", userId = user.UserId });
         }
@@ -56,6 +65,15 @@ namespace ClickView.Controllers
             if (user == null || user.PasswordHash != HashPassword(dto.Password))
                 return Unauthorized("Invalid email or password.");
 
+            if (!user.IsEmailVerified)
+            {
+                return StatusCode(403, new
+                {
+                    message = "Email not verified. Please check your inbox.",
+                    requiresVerification = true
+                });
+            }
+
             var accessToken = GenerateJwtToken(user);
             var refreshToken = GenerateRefreshToken();
 
@@ -66,11 +84,12 @@ namespace ClickView.Controllers
             return Ok(new
             {
                 message = "Login successful",
-                accessToken = accessToken,
-                refreshToken = refreshToken,
-                expiresIn = 3600 // optional: seconds until accessToken expires
+                accessToken,
+                refreshToken,
+                expiresIn = 3600
             });
         }
+
         [Authorize]
         [HttpPost("logout")]
         public async Task<IActionResult> Logout()
@@ -86,6 +105,34 @@ namespace ClickView.Controllers
             await _db.SaveChangesAsync();
 
             return Ok(new { message = "Logged out and refresh token revoked." });
+        }
+
+        [HttpPost("resend-code")]
+        public async Task<IActionResult> ResendVerificationCode([FromBody] ResendCodeDto dto)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == dto.Email);
+            if (user == null)
+                return NotFound("User not found.");
+
+            if (user.IsEmailVerified)
+                return BadRequest("Email already verified.");
+
+            if (user.LastVerificationEmailSentAt.HasValue &&
+                DateTime.UtcNow < user.LastVerificationEmailSentAt.Value.AddSeconds(60))
+            {
+                var secondsLeft = (int)(user.LastVerificationEmailSentAt.Value.AddSeconds(60) - DateTime.UtcNow).TotalSeconds;
+                return StatusCode(429, $"Please wait {secondsLeft} seconds before requesting a new code.");
+            }
+
+            var newCode = new Random().Next(10000, 99999).ToString(); //5 digit code
+            user.EmailVerificationCode = newCode;
+            user.VerificationCodeExpiry = DateTime.UtcNow.AddMinutes(10);
+            user.LastVerificationEmailSentAt = DateTime.UtcNow;
+
+            await _db.SaveChangesAsync();
+            await SendVerificationEmail(user.Email, newCode);
+
+            return Ok(new { message = "Verification code resent." });
         }
 
         [HttpPost("refresh-token")]
@@ -115,7 +162,6 @@ namespace ClickView.Controllers
             var hash = sha256.ComputeHash(bytes);
             return Convert.ToBase64String(hash);
         }
-
         private string GenerateJwtToken(User user)
         {
             var jwtSettings = _configuration.GetSection("Jwt");
@@ -169,6 +215,15 @@ namespace ClickView.Controllers
 
             return Ok(new { message = "CV uploaded and text extracted.", cvId = cv.CvId });
         }
+        private bool SecurePasswordCompare(string hashedPassword, string providedPassword)
+        {
+            var hashToCompare = HashPassword(providedPassword);
+            return CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(hashedPassword),
+                Encoding.UTF8.GetBytes(hashToCompare)
+            );
+        }
+
         private string ExtractTextFromPdf(byte[] pdfData)
         {
             using var ms = new MemoryStream(pdfData);
@@ -182,6 +237,7 @@ namespace ClickView.Controllers
 
             return text.ToString();
         }
+
         [HttpGet("{userId}/cvs")]
         public async Task<IActionResult> GetUserCvs(int userId)
         {
@@ -209,8 +265,46 @@ namespace ClickView.Controllers
             rng.GetBytes(randomBytes);
             return Convert.ToBase64String(randomBytes);
         }
-       
 
+        [HttpPost("verify-email")]
+        public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailDto dto)
+        {
+            var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == dto.Email);
 
+            if (user == null) return NotFound("User not found.");
+            if (user.IsEmailVerified) return Ok("Email already verified.");
+            if (user.EmailVerificationCode != dto.Code)
+                return BadRequest("Incorrect code.");
+            if (user.VerificationCodeExpiry < DateTime.UtcNow)
+                return BadRequest("Verification code expired.");
+
+            user.IsEmailVerified = true;
+            user.EmailVerificationCode = null;
+            user.VerificationCodeExpiry = null;
+
+            await _db.SaveChangesAsync();
+            return Ok("Email verified successfully.");
+        }
+
+        private async Task SendVerificationEmail(string email, string code)
+        {
+            using var smtp = new SmtpClient("smtp.gmail.com")
+            {
+                Port = 587,
+                Credentials = new NetworkCredential("clickview2003@gmail.com", "iens qemx shrx pmln"),
+                EnableSsl = true,
+            };
+
+            var message = new MailMessage
+            {
+                From = new MailAddress("clickview2003@gmail.com", "ClickView Team"),
+                Subject = "ClickView Email Verification",
+                Body = $"<p>Your verification code is: <strong>{code}</strong></p>",
+                IsBodyHtml = true
+            };
+
+            message.To.Add(email);
+            await smtp.SendMailAsync(message);
+        }
     }
 }

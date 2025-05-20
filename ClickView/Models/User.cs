@@ -15,6 +15,10 @@ namespace ClickView.Models
 
         [Required, EmailAddress]
         public string Email { get; set; }
+        public bool IsEmailVerified { get; set; } = false;
+        public string? EmailVerificationCode { get; set; }
+        public DateTime? VerificationCodeExpiry { get; set; }
+        public DateTime? LastVerificationEmailSentAt { get; set; }
 
         [Required]
         public string PasswordHash { get; set; }
