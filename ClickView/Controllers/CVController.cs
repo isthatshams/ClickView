@@ -19,6 +19,7 @@ namespace ClickView.Controllers
         }
 
         [HttpPost("{userId}/upload")]
+        [HttpPost("{userId}/upload-cv")]
         public async Task<IActionResult> UploadCv(int userId, IFormFile file)
         {
             if (file == null || file.Length == 0 || Path.GetExtension(file.FileName).ToLower() != ".pdf")
@@ -43,9 +44,45 @@ namespace ClickView.Controllers
             };
 
             _db.CVs.Add(cv);
-            await _db.SaveChangesAsync();
+            await _db.SaveChangesAsync(); // Save to get CvId
+
+            // 🔍 Extract insights via Flask
+            try
+            {
+                var insights = await ExtractInsightsFromFlask(extractedText);
+                if (insights != null)
+                {
+                    insights.CvId = cv.CvId;
+                    _db.CvInsights.Add(insights);
+                    await _db.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Failed to extract insights: " + ex.Message);
+            }
 
             return Ok(new { message = "CV uploaded and text extracted.", cvId = cv.CvId });
+        }
+        private async Task<CvInsights?> ExtractInsightsFromFlask(string cvText)
+        {
+            using var httpClient = new HttpClient();
+            var payload = new { cv_text = cvText };
+            var flaskUrl = "http://my-ngrok-url.ngrok-free.app/extract-insights"; //replace with Flask endpoint
+
+            var response = await httpClient.PostAsJsonAsync(flaskUrl, payload);
+            if (!response.IsSuccessStatusCode) return null;
+
+            var json = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
+
+            return new CvInsights
+            {
+                TechnicalSkills = string.Join(", ", json.GetValueOrDefault("technicalSkills", new())),
+                SoftSkills = string.Join(", ", json.GetValueOrDefault("softSkills", new())),
+                ToolsAndTechnologies = string.Join(", ", json.GetValueOrDefault("tools", new())),
+                Certifications = string.Join(", ", json.GetValueOrDefault("certifications", new())),
+                ExperienceSummary = string.Join(", ", json.GetValueOrDefault("experience", new()))
+            };
         }
 
         [HttpGet("{userId}")]
