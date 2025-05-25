@@ -18,8 +18,8 @@ namespace ClickView.Models
         public byte[] Content { get; set; }
 
         public DateTime UploadedAt { get; set; } = DateTime.UtcNow;
+        public CvInsights? Insights { get; set; }
 
-        
         [ForeignKey(nameof(User))]
         public int UserId { get; set; }
         public User? User { get; set; }

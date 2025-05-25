@@ -50,7 +50,8 @@ namespace ClickView.Controllers
 
                 if (!string.IsNullOrWhiteSpace(cv.ExtractedText))
                 {
-                    questionsFromGPT = await GetQuestionsFromChatGPTUsingCv(cv.ExtractedText, normalizedLevel);
+                    string combinedText = $"Job Title: {dto.JobTitle}\n\nCV:\n{cv.ExtractedText}";
+                    questionsFromGPT = await GetQuestionsFromChatGPTUsingCv(combinedText, normalizedLevel);
                     usedCvId = cv.CvId;
                 }
                 else
@@ -60,7 +61,7 @@ namespace ClickView.Controllers
             }
             else
             {
-                // No CV: use job title as GPT topic
+                //No CV: use job title as GPT topic
                 questionsFromGPT = await GetQuestionsFromChatGPT(normalizedLevel, dto.JobTitle);
             }
 
