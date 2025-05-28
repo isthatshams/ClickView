@@ -15,5 +15,10 @@ namespace ClickView.Data
         public DbSet<ReferencedAnswer> ReferencedAnswers { get; set; }
         public DbSet<CV> CVs { get; set; }
         public DbSet<CvInsights> CvInsights { get; set; }
+        public DbSet<AnswerAnalysis> AnswerAnalyses { get; set; }
+        public DbSet<FeedbackReport> FeedbackReports { get; set; }
+        public DbSet<CareerReport> CareerReports { get; set; }
+        public DbSet<RecommendedCourse> RecommendedCourses { get; set; }
+        public DbSet<CvEnhancement> CvEnhancements { get; set; }
     }
 }

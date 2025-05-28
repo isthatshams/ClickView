@@ -4,6 +4,12 @@ using ClickView.Models;
 using Microsoft.EntityFrameworkCore;
 using UglyToad.PdfPig;
 using System.Text;
+using ClickView.Services;
+using ClickView.DTOs;
+using System.Text.Json;
+using QuestPDF.Fluent;
+using QuestPDF.Helpers;
+using QuestPDF.Infrastructure;
 
 namespace ClickView.Controllers
 {
@@ -12,10 +18,12 @@ namespace ClickView.Controllers
     public class CVController : ControllerBase
     {
         private readonly ApplicationDbContext _db;
+        private readonly CvEnhancerService _cvEnhancerService;
 
-        public CVController(ApplicationDbContext db)
+        public CVController(ApplicationDbContext db, CvEnhancerService cvEnhancerService)
         {
             _db = db;
+            _cvEnhancerService = cvEnhancerService;
         }
 
         [HttpPost("{userId}/upload")]
@@ -117,6 +125,71 @@ namespace ClickView.Controllers
             }
 
             return text.ToString();
+        }
+
+        [HttpPost("{id}/enhance")]
+        public async Task<IActionResult> EnhanceCv(int id, [FromBody] EnhanceCvRequestDto dto)
+        {
+            var cv = _db.CVs.Include(c => c.Insights).FirstOrDefault(c => c.CvId == id);
+            if (cv == null) return NotFound("CV not found.");
+            var cvText = !string.IsNullOrWhiteSpace(cv.ExtractedText)
+                ? cv.ExtractedText
+                : cv.Insights != null
+                    ? $"{cv.Insights.TechnicalSkills}\n{cv.Insights.ToolsAndTechnologies}\n{cv.Insights.SoftSkills}\n{cv.Insights.Certifications}\n{cv.Insights.ExperienceSummary}"
+                    : null;
+            if (string.IsNullOrWhiteSpace(cvText))
+                return BadRequest("No CV text or insights available.");
+            var result = await _cvEnhancerService.EnhanceCvAsync(cvText, dto.JobTitle);
+            var enhancement = new CvEnhancement
+            {
+                CvId = id,
+                JobTitle = dto.JobTitle,
+                Suggestions = result.Suggestions,
+                EnhancedCvText = result.EnhancedCv,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.CvEnhancements.Add(enhancement);
+            await _db.SaveChangesAsync();
+            return Ok(enhancement);
+        }
+
+        [HttpGet("{id}/enhancement")]
+        public IActionResult GetLatestEnhancement(int id)
+        {
+            var enhancement = _db.CvEnhancements
+                .Where(e => e.CvId == id)
+                .OrderByDescending(e => e.CreatedAt)
+                .FirstOrDefault();
+            if (enhancement == null) return NotFound("No enhancement found.");
+            return Ok(enhancement);
+        }
+
+        [HttpGet("{id}/enhancement/pdf")]
+        public IActionResult DownloadEnhancedCvPdf(int id)
+        {
+            var enhancement = _db.CvEnhancements
+                .Where(e => e.CvId == id)
+                .OrderByDescending(e => e.CreatedAt)
+                .FirstOrDefault();
+            if (enhancement == null) return NotFound("No enhancement found.");
+            var document = Document.Create(container =>
+            {
+                container.Page(page =>
+                {
+                    page.Margin(30);
+                    page.Header().Text("Enhanced CV").FontSize(20).Bold();
+                    page.Content().Column(col =>
+                    {
+                        col.Item().Text("Suggestions:").Bold();
+                        col.Item().Text(enhancement.Suggestions);
+                        col.Item().PaddingVertical(10);
+                        col.Item().Text("Enhanced CV:").Bold();
+                        col.Item().Text(enhancement.EnhancedCvText).FontFamily("Arial");
+                    });
+                });
+            });
+            var pdfBytes = document.GeneratePdf();
+            return File(pdfBytes, "application/pdf", $"enhanced_cv_{id}.pdf");
         }
     }
 }

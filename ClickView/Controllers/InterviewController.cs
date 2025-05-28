@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
 using System.Net.Http.Json;
+using ClickView.Services;
 
 namespace ClickView.Controllers
 {
@@ -16,10 +17,12 @@ namespace ClickView.Controllers
     public class InterviewController : ControllerBase
     {
         private readonly ApplicationDbContext _db;
+        private readonly AnswerAnalysisService _analysisService;
 
-        public InterviewController(ApplicationDbContext db)
+        public InterviewController(ApplicationDbContext db, AnswerAnalysisService analysisService)
         {
             _db = db;
+            _analysisService = analysisService;
         }
 
         [HttpPost("start")]
@@ -427,6 +430,12 @@ namespace ClickView.Controllers
             };
             _db.UserAnswers.Add(answer);
             await _db.SaveChangesAsync();
+            // Analyze answer
+            var analysis = await _analysisService.AnalyzeAnswerAsync(dto.UserAnswerText);
+            analysis.UserAnswerId = answer.UserAnswerId;
+            _db.AnswerAnalyses.Add(analysis);
+            answer.AnswerAnalysisId = analysis.AnswerAnalysisId;
+            await _db.SaveChangesAsync();
 
             // Prepare Q&A context for next question
             var previousQA = interview.UserAnswers.Select(a => new { question = interview.Questions.FirstOrDefault(q => q.QuestionId == a.QuestionId)?.QuestionText ?? "", answer = a.UserAnswerText }).ToList();
@@ -524,12 +533,25 @@ namespace ClickView.Controllers
                     UserAnswerText = dto.UserAnswerText
                 };
                 _db.UserAnswers.Add(answer);
+                await _db.SaveChangesAsync();
+                // Analyze answer
+                var analysis = await _analysisService.AnalyzeAnswerAsync(dto.UserAnswerText);
+                analysis.UserAnswerId = answer.UserAnswerId;
+                _db.AnswerAnalyses.Add(analysis);
+                answer.AnswerAnalysisId = analysis.AnswerAnalysisId;
+                await _db.SaveChangesAsync();
             }
             else
             {
                 answer.UserAnswerText = dto.UserAnswerText;
+                await _db.SaveChangesAsync();
+                // Re-analyze answer
+                var analysis = await _analysisService.AnalyzeAnswerAsync(dto.UserAnswerText);
+                analysis.UserAnswerId = answer.UserAnswerId;
+                _db.AnswerAnalyses.Add(analysis);
+                answer.AnswerAnalysisId = analysis.AnswerAnalysisId;
+                await _db.SaveChangesAsync();
             }
-            await _db.SaveChangesAsync();
             // Generate follow-up for this question branch
             var payload = new
             {
@@ -622,6 +644,47 @@ namespace ClickView.Controllers
             _db.Questions.Add(followupQuestion);
             await _db.SaveChangesAsync();
             return Ok(new { question = followupText, questionId = followupQuestion.QuestionId });
+        }
+
+        [HttpGet("{interviewId}/summary/ai")]
+        public async Task<IActionResult> GetInterviewAISummary(int interviewId)
+        {
+            var interview = _db.Interviews
+                .Include(i => i.UserAnswers)
+                .ThenInclude(a => a.AnswerAnalysis)
+                .Include(i => i.Questions)
+                .FirstOrDefault(i => i.InterviewId == interviewId);
+            if (interview == null) return NotFound("Interview not found.");
+            var summary = await _analysisService.AnalyzeInterviewAsync(interview.UserAnswers.ToList());
+            return Ok(summary);
+        }
+
+        [HttpGet("{interviewId}/feedback")]
+        public async Task<IActionResult> GetInterviewFeedback(int interviewId)
+        {
+            var interview = _db.Interviews
+                .Include(i => i.UserAnswers)
+                .ThenInclude(a => a.AnswerAnalysis)
+                .Include(i => i.Questions)
+                .FirstOrDefault(i => i.InterviewId == interviewId);
+            if (interview == null) return NotFound("Interview not found.");
+            // Check if feedback already exists
+            var existing = _db.FeedbackReports.FirstOrDefault(f => f.InterviewId == interviewId);
+            if (existing != null)
+                return Ok(existing);
+            // Generate feedback
+            var feedbackDto = await _analysisService.GenerateFeedbackReportAsync(interview.UserAnswers.ToList());
+            var report = new FeedbackReport
+            {
+                InterviewId = interviewId,
+                Strengths = feedbackDto.Strengths,
+                Weaknesses = feedbackDto.Weaknesses,
+                PersonalitySummary = feedbackDto.PersonalitySummary,
+                Recommendation = feedbackDto.Recommendation
+            };
+            _db.FeedbackReports.Add(report);
+            await _db.SaveChangesAsync();
+            return Ok(report);
         }
     }
 }
