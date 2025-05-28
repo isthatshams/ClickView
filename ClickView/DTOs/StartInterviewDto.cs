@@ -7,5 +7,6 @@
         public int? CvId { get; set; }
         public string Level { get; set; }  // "internship", "junior", "mid", "senior"
         public string JobTitle { get; set; }
+        public int? OriginalInterviewId { get; set; }
     }
 }

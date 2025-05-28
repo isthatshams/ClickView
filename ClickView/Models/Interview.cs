@@ -12,6 +12,7 @@ namespace ClickView.Models
 
         public double InterviewMark { get; set; }
         public DateTime StartedAt { get; set; } = DateTime.UtcNow;
+        public int? OriginalInterviewId { get; set; }
 
         [ForeignKey(nameof(User))]
         public int UserId { get; set; }
@@ -19,7 +20,7 @@ namespace ClickView.Models
         public User User { get; set; }
 
         [ForeignKey(nameof(CV))]
-        public int? CvId { get; set; } // ✅ Optional link to CV used
+        public int? CvId { get; set; } //Optional link to CV used
         public CV? CV { get; set; }
 
         public List<Question> Questions { get; set; } = new();

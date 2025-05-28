@@ -3,6 +3,8 @@ using ClickView.Models;
 using ClickView.DTOs;
 using ClickView.Data;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace ClickView.Controllers
 {
@@ -44,19 +46,27 @@ namespace ClickView.Controllers
 
             if (dto.CvId.HasValue)
             {
-                var cv = await _db.CVs.FindAsync(dto.CvId.Value);
-                if (cv == null || cv.UserId != dto.UserId)
+                var cv = await _db.CVs
+                    .Include(c => c.Insights)
+                    .FirstOrDefaultAsync(c => c.CvId == dto.CvId.Value && c.UserId == dto.UserId);
+
+                if (cv == null)
                     return BadRequest("Invalid or unauthorized CV.");
 
-                if (!string.IsNullOrWhiteSpace(cv.ExtractedText))
+                if (cv.Insights != null)
+                {
+                    questionsFromGPT = await GetQuestionsFromInsights(cv.Insights, normalizedLevel,dto.JobTitle );
+                    usedCvId = cv.CvId;
+                }
+                else if (!string.IsNullOrWhiteSpace(cv.ExtractedText))
                 {
                     string combinedText = $"Job Title: {dto.JobTitle}\n\nCV:\n{cv.ExtractedText}";
-                    questionsFromGPT = await GetQuestionsFromChatGPTUsingCv(combinedText, normalizedLevel);
+                    questionsFromGPT = await GetQuestionsFromChatGPTUsingCv(cv.ExtractedText, dto.JobTitle, normalizedLevel);
                     usedCvId = cv.CvId;
                 }
                 else
                 {
-                    return BadRequest("Selected CV has no readable text.");
+                    return BadRequest("Selected CV has no insights or readable text.");
                 }
             }
             else
@@ -84,6 +94,9 @@ namespace ClickView.Controllers
             _db.Interviews.Add(interview);
             await _db.SaveChangesAsync();
 
+            interview.OriginalInterviewId = dto.OriginalInterviewId ?? interview.InterviewId;
+
+            await _db.SaveChangesAsync();
             return Ok(new { message = "Interview started", interviewId = interview.InterviewId });
         }
 
@@ -205,28 +218,87 @@ namespace ClickView.Controllers
                 topic = topic
             };
 
-            var response = await client.PostAsJsonAsync("https://cac6-34-150-163-215.ngrok-free.app/generate-questions", payload);
+            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-questions", payload);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
             return result["questions"];
         }
-        private async Task<List<string>> GetQuestionsFromChatGPTUsingCv(string extractedText, string level)
+        private async Task<List<string>> GetQuestionsFromChatGPTUsingCv(string extractedText, string jobTitle, string level)
         {
             using var client = new HttpClient();
 
             var payload = new
             {
-                cv_text = extractedText,
-                level = level
+                level,
+                cv_text = $"Job Title: {jobTitle}\n\nCV:\n{extractedText}"
             };
 
-            var response = await client.PostAsJsonAsync("https://your-ngrok-url.ngrok.io/generate-questions", payload);
+            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-questions", payload);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
-            return result["questions"];
+            return result?["questions"] ?? new List<string>();
+        }
+        private async Task<List<string>> GetQuestionsFromInsights(CvInsights insights, string jobTitle, string level)
+        {
+            using var client = new HttpClient();
+            var payload = new
+            {
+                level,
+                cv_text = $"""
+        Job Title: {jobTitle}
+        Technical Skills: {insights.TechnicalSkills}
+        Tools and Technologies: {insights.ToolsAndTechnologies}
+        Soft Skills: {insights.SoftSkills}
+        Certifications: {insights.Certifications}
+        Experience Summary: {insights.ExperienceSummary}
+        """
+            };
+
+            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-questions", payload);
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
+            return result?["questions"] ?? new List<string>();
         }
 
+        [Authorize]
+        [HttpPost("{interviewId}/retake-same")]
+        public async Task<IActionResult> RetakeSameInterview(int interviewId)
+        {
+            var original = await _db.Interviews
+                .Include(i => i.Questions)
+                .FirstOrDefaultAsync(i => i.InterviewId == interviewId);
+
+            if (original == null)
+                return NotFound("Original interview not found.");
+
+            var userId = int.Parse(User.FindFirstValue("userId")!);
+            if (original.UserId != userId)
+                return Forbid();
+
+            var clonedQuestions = original.Questions.Select(q => new Question
+            {
+                QuestionText = q.QuestionText,
+                DifficultyLevel = q.DifficultyLevel,
+                QuestionMark = q.QuestionMark
+            }).ToList();
+
+            var newInterview = new Interview
+            {
+                UserId = userId,
+                InterviewType = original.InterviewType,
+                InterviewMark = 0,
+                CvId = original.CvId,
+                Questions = clonedQuestions,
+                OriginalInterviewId = original.OriginalInterviewId ?? original.InterviewId
+            };
+
+            _db.Interviews.Add(newInterview);
+            await _db.SaveChangesAsync();
+
+            return Ok(new { message = "Retake started", interviewId = newInterview.InterviewId });
+        }
     }
 }

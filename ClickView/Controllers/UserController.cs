@@ -242,5 +242,40 @@ namespace ClickView.Controllers
             message.To.Add(email);
             await smtp.SendMailAsync(message);
         }
+
+        [Authorize]
+        [HttpPost("change-password")]
+        public async Task<IActionResult> ChangePassword(ChangePasswordDto dto)
+        {
+            var userId = int.Parse(User.FindFirstValue("userId")!);
+            var user = await _db.Users.FindAsync(userId);
+
+            if (user == null) return NotFound("User not found.");
+
+            if (!SecurePasswordCompare(user.PasswordHash, dto.OldPassword))
+                return BadRequest("Old password is incorrect.");
+
+            user.PasswordHash = HashPassword(dto.NewPassword);
+            await _db.SaveChangesAsync();
+
+            return Ok("Password changed successfully.");
+        }
+
+        [Authorize]
+        [HttpPatch("update-profile")]
+        public async Task<IActionResult> UpdateProfile(UpdateProfileDto dto)
+        {
+            var userId = int.Parse(User.FindFirstValue("userId")!);
+            var user = await _db.Users.FindAsync(userId);
+
+            if (user == null) return NotFound("User not found.");
+
+            user.FirstName = dto.FirstName ?? user.FirstName;
+            user.LastName = dto.LastName ?? user.LastName;
+
+            await _db.SaveChangesAsync();
+            return Ok("Profile updated successfully.");
+        }
+
     }
 }
