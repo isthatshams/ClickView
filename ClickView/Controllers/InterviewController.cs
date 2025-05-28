@@ -5,6 +5,7 @@ using ClickView.Data;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Claims;
+using System.Net.Http.Json;
 
 namespace ClickView.Controllers
 {
@@ -299,6 +300,328 @@ namespace ClickView.Controllers
             await _db.SaveChangesAsync();
 
             return Ok(new { message = "Retake started", interviewId = newInterview.InterviewId });
+        }
+
+        [HttpPost("next-question")]
+        public async Task<IActionResult> GetAdaptiveFollowup([FromBody] AdaptiveFollowupDto dto)
+        {
+            var interview = _db.Interviews
+                .Include(i => i.Questions)
+                .Include(i => i.UserAnswers)
+                .Include(i => i.CV)
+                .FirstOrDefault(i => i.InterviewId == dto.InterviewId);
+            if (interview == null)
+                return NotFound("Interview not found.");
+
+            var lastQuestion = interview.Questions.FirstOrDefault(q => q.QuestionId == dto.LastQuestionId);
+            if (lastQuestion == null)
+                return NotFound("Last question not found.");
+
+            // Gather previous Q&A
+            var previousQA = interview.UserAnswers
+                .OrderBy(a => a.UserAnswerId)
+                .Where(a => a.QuestionId != dto.LastQuestionId)
+                .Select(a => new { question = interview.Questions.FirstOrDefault(q => q.QuestionId == a.QuestionId)?.QuestionText ?? "", answer = a.UserAnswerText })
+                .ToList();
+
+            // Compose request for Python API
+            var requestBody = new
+            {
+                job_title = interview.CV?.JobTitle ?? "",
+                level = interview.Questions.FirstOrDefault()?.DifficultyLevel.ToString().ToLower() ?? "junior",
+                cv_text = interview.CV?.ExtractedText ?? "",
+                previous_qa = previousQA,
+                last_question = lastQuestion.QuestionText,
+                last_answer = dto.LastAnswerText
+            };
+
+            using var client = new HttpClient();
+            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-followup", requestBody);
+            if (!response.IsSuccessStatusCode)
+                return StatusCode((int)response.StatusCode, "Failed to get follow-up question from AI service.");
+            var result = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+            var followupText = result?["question"] ?? "";
+            if (string.IsNullOrWhiteSpace(followupText))
+                return StatusCode(500, "AI did not return a valid question.");
+
+            // Store the new question
+            var followupQuestion = new Question
+            {
+                QuestionText = followupText,
+                DifficultyLevel = lastQuestion.DifficultyLevel,
+                QuestionMark = 5,
+                InterviewId = interview.InterviewId
+            };
+            _db.Questions.Add(followupQuestion);
+            await _db.SaveChangesAsync();
+
+            return Ok(new { question = followupText, questionId = followupQuestion.QuestionId });
+        }
+
+        // VOICE INTERVIEW ENDPOINTS
+        [HttpPost("voice/start")]
+        public async Task<IActionResult> StartVoiceInterview([FromBody] StartVoiceInterviewDto dto)
+        {
+            // Validate user
+            var user = await _db.Users.FindAsync(dto.UserId);
+            if (user == null) return NotFound("User not found.");
+
+            // Get CV if provided
+            CV cv = null;
+            if (dto.CvId.HasValue)
+                cv = await _db.CVs.FindAsync(dto.CvId.Value);
+
+            // Create interview
+            var interview = new Interview
+            {
+                UserId = dto.UserId,
+                InterviewType = InterviewType.Voice,
+                CvId = dto.CvId,
+                Questions = new List<Question>(),
+                UserAnswers = new List<UserAnswer>()
+            };
+            _db.Interviews.Add(interview);
+            await _db.SaveChangesAsync();
+
+            // Generate first question using Python API
+            var payload = new
+            {
+                level = dto.Level.ToLower(),
+                cv_text = cv?.ExtractedText ?? "",
+                topic = dto.JobTitle
+            };
+            using var client = new HttpClient();
+            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-questions", payload);
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
+            var firstQuestionText = result?["questions"]?.FirstOrDefault();
+            if (string.IsNullOrWhiteSpace(firstQuestionText))
+                return StatusCode(500, "Failed to generate first question.");
+            var firstQuestion = new Question
+            {
+                QuestionText = firstQuestionText,
+                DifficultyLevel = Enum.TryParse<DifficultyLevel>(dto.Level, true, out var lvl) ? lvl : DifficultyLevel.Junior,
+                QuestionMark = 5,
+                InterviewId = interview.InterviewId
+            };
+            _db.Questions.Add(firstQuestion);
+            await _db.SaveChangesAsync();
+            return Ok(new { interviewId = interview.InterviewId, question = firstQuestion.QuestionText, questionId = firstQuestion.QuestionId });
+        }
+
+        [HttpPost("voice/answer-next")]
+        public async Task<IActionResult> SubmitVoiceAnswerAndGetNext([FromBody] VoiceAnswerDto dto)
+        {
+            // Find interview and last question
+            var interview = _db.Interviews.Include(i => i.Questions).Include(i => i.UserAnswers).FirstOrDefault(i => i.InterviewId == dto.InterviewId && i.InterviewType == InterviewType.Voice);
+            if (interview == null) return NotFound("Interview not found.");
+            var lastQuestion = interview.Questions.FirstOrDefault(q => q.QuestionId == dto.QuestionId);
+            if (lastQuestion == null) return NotFound("Question not found.");
+
+            // Save answer
+            var answer = new UserAnswer
+            {
+                InterviewId = dto.InterviewId,
+                QuestionId = dto.QuestionId,
+                UserAnswerText = dto.UserAnswerText
+            };
+            _db.UserAnswers.Add(answer);
+            await _db.SaveChangesAsync();
+
+            // Prepare Q&A context for next question
+            var previousQA = interview.UserAnswers.Select(a => new { question = interview.Questions.FirstOrDefault(q => q.QuestionId == a.QuestionId)?.QuestionText ?? "", answer = a.UserAnswerText }).ToList();
+            var payload = new
+            {
+                job_title = interview.CV?.JobTitle ?? "",
+                level = lastQuestion.DifficultyLevel.ToString().ToLower(),
+                cv_text = interview.CV?.ExtractedText ?? "",
+                previous_qa = previousQA,
+                last_question = lastQuestion.QuestionText,
+                last_answer = dto.UserAnswerText
+            };
+            using var client = new HttpClient();
+            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-followup", payload);
+            if (!response.IsSuccessStatusCode)
+                return StatusCode((int)response.StatusCode, "Failed to get follow-up question from AI service.");
+            var result = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+            var followupText = result?["question"] ?? "";
+            if (string.IsNullOrWhiteSpace(followupText))
+                return Ok(new { message = "Interview complete" }); // No more questions
+            var followupQuestion = new Question
+            {
+                QuestionText = followupText,
+                DifficultyLevel = lastQuestion.DifficultyLevel,
+                QuestionMark = 5,
+                InterviewId = interview.InterviewId
+            };
+            _db.Questions.Add(followupQuestion);
+            await _db.SaveChangesAsync();
+            return Ok(new { question = followupText, questionId = followupQuestion.QuestionId });
+        }
+
+        // CHAT INTERVIEW ENDPOINTS
+        [HttpPost("chat/start")]
+        public async Task<IActionResult> StartChatInterview([FromBody] StartTextInterviewDto dto)
+        {
+            // Validate user
+            var user = await _db.Users.FindAsync(dto.UserId);
+            if (user == null) return NotFound("User not found.");
+            CV cv = null;
+            if (dto.CvId.HasValue)
+                cv = await _db.CVs.FindAsync(dto.CvId.Value);
+            // Create interview
+            var interview = new Interview
+            {
+                UserId = dto.UserId,
+                InterviewType = InterviewType.Chat,
+                CvId = dto.CvId,
+                Questions = new List<Question>(),
+                UserAnswers = new List<UserAnswer>()
+            };
+            _db.Interviews.Add(interview);
+            await _db.SaveChangesAsync();
+            // Generate initial batch of questions (3–5, diverse topics)
+            var payload = new
+            {
+                level = dto.Level.ToLower(),
+                cv_text = cv?.ExtractedText ?? "",
+                topic = dto.JobTitle
+            };
+            using var client = new HttpClient();
+            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-questions", payload);
+            response.EnsureSuccessStatusCode();
+            var result = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
+            var questions = result?["questions"]?.Take(5).ToList() ?? new List<string>();
+            var initialQuestions = questions.Select(q => new Question
+            {
+                QuestionText = q,
+                DifficultyLevel = Enum.TryParse<DifficultyLevel>(dto.Level, true, out var lvl) ? lvl : DifficultyLevel.Junior,
+                QuestionMark = 5,
+                InterviewId = interview.InterviewId,
+                ParentQuestionId = null
+            }).ToList();
+            _db.Questions.AddRange(initialQuestions);
+            await _db.SaveChangesAsync();
+            return Ok(new { interviewId = interview.InterviewId, questions = initialQuestions.Select(q => new { q.QuestionId, q.QuestionText }) });
+        }
+
+        [HttpPost("chat/answer-next")]
+        public async Task<IActionResult> SubmitChatAnswerAndGetFollowup([FromBody] TextAnswerNextDto dto)
+        {
+            // Find interview and question
+            var interview = _db.Interviews.Include(i => i.Questions).Include(i => i.UserAnswers).FirstOrDefault(i => i.InterviewId == dto.InterviewId && i.InterviewType == InterviewType.Chat);
+            if (interview == null) return NotFound("Interview not found.");
+            var question = interview.Questions.FirstOrDefault(q => q.QuestionId == dto.QuestionId);
+            if (question == null) return NotFound("Question not found.");
+            // Save or update answer
+            var answer = interview.UserAnswers.FirstOrDefault(a => a.QuestionId == dto.QuestionId);
+            if (answer == null)
+            {
+                answer = new UserAnswer
+                {
+                    InterviewId = dto.InterviewId,
+                    QuestionId = dto.QuestionId,
+                    UserAnswerText = dto.UserAnswerText
+                };
+                _db.UserAnswers.Add(answer);
+            }
+            else
+            {
+                answer.UserAnswerText = dto.UserAnswerText;
+            }
+            await _db.SaveChangesAsync();
+            // Generate follow-up for this question branch
+            var payload = new
+            {
+                job_title = interview.CV?.JobTitle ?? "",
+                level = question.DifficultyLevel.ToString().ToLower(),
+                cv_text = interview.CV?.ExtractedText ?? "",
+                previous_qa = new[] { new { question = question.QuestionText, answer = dto.UserAnswerText } },
+                last_question = question.QuestionText,
+                last_answer = dto.UserAnswerText
+            };
+            using var client = new HttpClient();
+            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-followup", payload);
+            if (!response.IsSuccessStatusCode)
+                return StatusCode((int)response.StatusCode, "Failed to get follow-up question from AI service.");
+            var result = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+            var followupText = result?["question"] ?? "";
+            if (string.IsNullOrWhiteSpace(followupText))
+                return Ok(new { message = "No follow-up question" });
+            var followupQuestion = new Question
+            {
+                QuestionText = followupText,
+                DifficultyLevel = question.DifficultyLevel,
+                QuestionMark = 5,
+                InterviewId = interview.InterviewId,
+                ParentQuestionId = question.QuestionId
+            };
+            _db.Questions.Add(followupQuestion);
+            await _db.SaveChangesAsync();
+            return Ok(new { question = followupText, questionId = followupQuestion.QuestionId });
+        }
+
+        [HttpPost("chat/edit-answer")]
+        public async Task<IActionResult> EditChatAnswerAndRegenerateBranch([FromBody] EditTextAnswerDto dto)
+        {
+            // Find interview and question
+            var interview = _db.Interviews.Include(i => i.Questions).Include(i => i.UserAnswers).FirstOrDefault(i => i.InterviewId == dto.InterviewId && i.InterviewType == InterviewType.Chat);
+            if (interview == null) return NotFound("Interview not found.");
+            var question = interview.Questions.FirstOrDefault(q => q.QuestionId == dto.QuestionId);
+            if (question == null) return NotFound("Question not found.");
+            // Update answer
+            var answer = interview.UserAnswers.FirstOrDefault(a => a.QuestionId == dto.QuestionId);
+            if (answer == null)
+                return NotFound("Answer not found.");
+            answer.UserAnswerText = dto.NewAnswerText;
+            await _db.SaveChangesAsync();
+            // Delete all descendant follow-up questions and answers
+            var toDeleteQuestions = new List<Question>();
+            var toDeleteAnswers = new List<UserAnswer>();
+            void CollectDescendants(int parentId)
+            {
+                var children = interview.Questions.Where(q => q.ParentQuestionId == parentId).ToList();
+                foreach (var child in children)
+                {
+                    toDeleteQuestions.Add(child);
+                    var childAnswer = interview.UserAnswers.FirstOrDefault(a => a.QuestionId == child.QuestionId);
+                    if (childAnswer != null) toDeleteAnswers.Add(childAnswer);
+                    CollectDescendants(child.QuestionId);
+                }
+            }
+            CollectDescendants(dto.QuestionId);
+            _db.UserAnswers.RemoveRange(toDeleteAnswers);
+            _db.Questions.RemoveRange(toDeleteQuestions);
+            await _db.SaveChangesAsync();
+            // Generate new follow-up for the edited answer
+            var payload = new
+            {
+                job_title = interview.CV?.JobTitle ?? "",
+                level = question.DifficultyLevel.ToString().ToLower(),
+                cv_text = interview.CV?.ExtractedText ?? "",
+                previous_qa = new[] { new { question = question.QuestionText, answer = dto.NewAnswerText } },
+                last_question = question.QuestionText,
+                last_answer = dto.NewAnswerText
+            };
+            using var client = new HttpClient();
+            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-followup", payload);
+            if (!response.IsSuccessStatusCode)
+                return StatusCode((int)response.StatusCode, "Failed to get follow-up question from AI service.");
+            var result = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
+            var followupText = result?["question"] ?? "";
+            if (string.IsNullOrWhiteSpace(followupText))
+                return Ok(new { message = "No follow-up question" });
+            var followupQuestion = new Question
+            {
+                QuestionText = followupText,
+                DifficultyLevel = question.DifficultyLevel,
+                QuestionMark = 5,
+                InterviewId = interview.InterviewId,
+                ParentQuestionId = question.QuestionId
+            };
+            _db.Questions.Add(followupQuestion);
+            await _db.SaveChangesAsync();
+            return Ok(new { question = followupText, questionId = followupQuestion.QuestionId });
         }
     }
 }

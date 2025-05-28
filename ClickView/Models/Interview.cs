@@ -26,6 +26,5 @@ namespace ClickView.Models
         public List<Question> Questions { get; set; } = new();
 
         public List<UserAnswer> UserAnswers { get; set; } = new();
-
     }
 }

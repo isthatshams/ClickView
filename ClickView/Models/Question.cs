@@ -21,5 +21,7 @@ namespace ClickView.Models
         public ReferencedAnswer ReferencedAnswer { get; set; }
 
         public List<UserAnswer> UserAnswers { get; set; } = new();
+
+        public int? ParentQuestionId { get; set; }
     }
 }

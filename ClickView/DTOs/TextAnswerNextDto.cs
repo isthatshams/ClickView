@@ -1,9 +1,9 @@
-﻿namespace ClickView.DTOs
+namespace ClickView.DTOs
 {
-    public class VoiceAnswerDto
+    public class TextAnswerNextDto
     {
         public int InterviewId { get; set; }
         public int QuestionId { get; set; }
         public string UserAnswerText { get; set; }
     }
-}
+} 
