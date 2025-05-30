@@ -20,5 +20,16 @@ namespace ClickView.Data
         public DbSet<CareerReport> CareerReports { get; set; }
         public DbSet<RecommendedCourse> RecommendedCourses { get; set; }
         public DbSet<CvEnhancement> CvEnhancements { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            // Configure one-to-one relationship between AnswerAnalysis and UserAnswer
+            modelBuilder.Entity<AnswerAnalysis>()
+                .HasOne(a => a.UserAnswer)
+                .WithOne(u => u.AnswerAnalysis)
+                .HasForeignKey<AnswerAnalysis>(a => a.UserAnswerId);
+        }
     }
 }

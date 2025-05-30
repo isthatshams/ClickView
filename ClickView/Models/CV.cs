@@ -25,6 +25,7 @@ namespace ClickView.Models
         public User? User { get; set; }
 
         public string? ExtractedText { get; set; }
+        public string? JobTitle { get; set; }
 
         public ICollection<Interview>? Interviews { get; set; }
     }
