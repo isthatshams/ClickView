@@ -12,6 +12,8 @@ using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using System.Net.Mail;
 using System.Net;
+using Microsoft.AspNetCore.Http;
+using System.IO;
 
 namespace ClickView.Controllers
 {
@@ -293,8 +295,57 @@ namespace ClickView.Controllers
                 firstName = user.FirstName,
                 lastName = user.LastName,
                 email = user.Email,
-                professionalTitle = user.ProfessionalTitle
+                professionalTitle = user.ProfessionalTitle,
+                profilePicture = user.ProfilePictureUrl
             });
+        }
+
+        [Authorize]
+        [HttpPost("upload-profile-picture")]
+        public async Task<IActionResult> UploadProfilePicture(IFormFile file)
+        {
+            try
+            {
+                if (file == null || file.Length == 0)
+                    return BadRequest("No file uploaded.");
+
+                if (!file.ContentType.StartsWith("image/"))
+                    return BadRequest("File must be an image.");
+
+                var userId = int.Parse(User.FindFirstValue("userId")!);
+                var user = await _db.Users.FindAsync(userId);
+
+                if (user == null)
+                    return NotFound("User not found.");
+
+                // Create a unique filename
+                var fileName = $"{userId}_{DateTime.UtcNow.Ticks}{Path.GetExtension(file.FileName)}";
+                var wwwrootPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+                var profilePicturesPath = Path.Combine(wwwrootPath, "profile-pictures");
+                var filePath = Path.Combine(profilePicturesPath, fileName);
+
+                // Ensure directory exists
+                Directory.CreateDirectory(profilePicturesPath);
+
+                // Save the file
+                using (var stream = new FileStream(filePath, FileMode.Create))
+                {
+                    await file.CopyToAsync(stream);
+                }
+
+                // Update user's profile picture URL
+                user.ProfilePictureUrl = $"/profile-pictures/{fileName}";
+                await _db.SaveChangesAsync();
+
+                return Ok(new { profilePictureUrl = user.ProfilePictureUrl });
+            }
+            catch (Exception ex)
+            {
+                // Log the error
+                Console.WriteLine($"Error uploading profile picture: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
         }
     }
 }
