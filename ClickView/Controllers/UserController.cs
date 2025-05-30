@@ -272,10 +272,29 @@ namespace ClickView.Controllers
 
             user.FirstName = dto.FirstName ?? user.FirstName;
             user.LastName = dto.LastName ?? user.LastName;
+            user.ProfessionalTitle = dto.ProfessionalTitle ?? user.ProfessionalTitle;
 
             await _db.SaveChangesAsync();
             return Ok("Profile updated successfully.");
         }
 
+        [Authorize]
+        [HttpGet("profile")]
+        public async Task<IActionResult> GetProfile()
+        {
+            var userId = int.Parse(User.FindFirstValue("userId")!);
+            var user = await _db.Users.FindAsync(userId);
+
+            if (user == null)
+                return NotFound("User not found.");
+
+            return Ok(new
+            {
+                firstName = user.FirstName,
+                lastName = user.LastName,
+                email = user.Email,
+                professionalTitle = user.ProfessionalTitle
+            });
+        }
     }
 }

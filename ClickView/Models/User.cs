@@ -13,6 +13,8 @@ namespace ClickView.Models
         [Required]
         public string LastName { get; set; }
 
+        public string ProfessionalTitle { get; set; } = "User";
+
         [Required, EmailAddress]
         public string Email { get; set; }
         public bool IsEmailVerified { get; set; } = false;
