@@ -28,6 +28,9 @@ namespace ClickView.Models
         public DateTime? RefreshTokenExpiryTime { get; set; }
         public bool IsActive { get; set; }
         public string? ProfilePictureUrl { get; set; }
+        public bool ShowProfile { get; set; } = true;
+        public bool ShowActivity { get; set; } = true;
+        public bool ShowProgress { get; set; } = false;
 
         public List<Interview> Interviews { get; set; } = new();
         public ICollection<CV> CVs { get; set; } //Multiple CVs

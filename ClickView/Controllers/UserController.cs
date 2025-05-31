@@ -347,5 +347,65 @@ namespace ClickView.Controllers
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
         }
+
+        [Authorize]
+        [HttpPatch("update-privacy")]
+        public async Task<IActionResult> UpdatePrivacySettings(PrivacySettingsDto dto)
+        {
+            var userId = int.Parse(User.FindFirstValue("userId")!);
+            var user = await _db.Users.FindAsync(userId);
+
+            if (user == null) return NotFound("User not found.");
+
+            user.ShowProfile = dto.ShowProfile;
+            user.ShowActivity = dto.ShowActivity;
+            user.ShowProgress = dto.ShowProgress;
+
+            await _db.SaveChangesAsync();
+            return Ok("Privacy settings updated successfully.");
+        }
+
+        [Authorize]
+        [HttpDelete("delete-account")]
+        public async Task<IActionResult> DeleteAccount()
+        {
+            var userId = int.Parse(User.FindFirstValue("userId")!);
+            var user = await _db.Users.FindAsync(userId);
+
+            if (user == null) return NotFound("User not found.");
+
+            // Delete user's profile picture if exists
+            if (!string.IsNullOrEmpty(user.ProfilePictureUrl))
+            {
+                var wwwrootPath = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+                var filePath = Path.Combine(wwwrootPath, user.ProfilePictureUrl.TrimStart('/'));
+                if (System.IO.File.Exists(filePath))
+                {
+                    System.IO.File.Delete(filePath);
+                }
+            }
+
+            _db.Users.Remove(user);
+            await _db.SaveChangesAsync();
+
+            return Ok("Account deleted successfully.");
+        }
+
+        [Authorize]
+        [HttpGet("privacy-settings")]
+        public async Task<IActionResult> GetPrivacySettings()
+        {
+            var userId = int.Parse(User.FindFirstValue("userId")!);
+            var user = await _db.Users.FindAsync(userId);
+
+            if (user == null) return NotFound("User not found.");
+
+            return Ok(new
+            {
+                showProfile = user.ShowProfile,
+                showActivity = user.ShowActivity,
+                showProgress = user.ShowProgress
+            });
+        }
     }
 }
