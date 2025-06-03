@@ -44,6 +44,17 @@ namespace ClickView.Controllers
             // Check if this is the user's first CV
             var isFirstCv = !await _db.CVs.AnyAsync(c => c.UserId == userId);
 
+            // Create uploads directory if it doesn't exist
+            var uploadsDir = Path.Combine(Directory.GetCurrentDirectory(), "Uploads");
+            if (!Directory.Exists(uploadsDir))
+            {
+                Directory.CreateDirectory(uploadsDir);
+            }
+
+            // Generate a unique filename
+            var uniqueFileName = $"{Guid.NewGuid()}_{file.FileName}";
+            var filePath = Path.Combine("Uploads", uniqueFileName);
+
             var cv = new CV
             {
                 UserId = userId,
@@ -51,11 +62,16 @@ namespace ClickView.Controllers
                 ContentType = file.ContentType,
                 Content = content,
                 ExtractedText = extractedText,
-                IsDefault = isFirstCv // Set as default if it's the first CV
+                IsDefault = isFirstCv, // Set as default if it's the first CV
+                FilePath = filePath // Set file path
             };
 
             _db.CVs.Add(cv);
             await _db.SaveChangesAsync(); // Save to get CvId
+
+            // Save the file to disk
+            var fullPath = Path.Combine(Directory.GetCurrentDirectory(), filePath);
+            await System.IO.File.WriteAllBytesAsync(fullPath, content);
 
             // 🔍 Extract insights via Flask
             try
@@ -194,47 +210,27 @@ namespace ClickView.Controllers
         [HttpPost("{id}/enhance")]
         public async Task<IActionResult> EnhanceCv(int id, [FromBody] EnhanceCvRequestDto dto)
         {
-            try
+            var cv = _db.CVs.Include(c => c.Insights).FirstOrDefault(c => c.CvId == id);
+            if (cv == null) return NotFound("CV not found.");
+            var cvText = !string.IsNullOrWhiteSpace(cv.ExtractedText)
+                ? cv.ExtractedText
+                : cv.Insights != null
+                    ? $"{cv.Insights.TechnicalSkills}\n{cv.Insights.ToolsAndTechnologies}\n{cv.Insights.SoftSkills}\n{cv.Insights.Certifications}\n{cv.Insights.ExperienceSummary}"
+                    : null;
+            if (string.IsNullOrWhiteSpace(cvText))
+                return BadRequest("No CV text or insights available.");
+            var result = await _cvEnhancerService.EnhanceCvAsync(cvText, dto.JobTitle);
+            var enhancement = new CvEnhancement
             {
-                var cv = await _db.CVs
-                    .Include(c => c.Insights)
-                    .FirstOrDefaultAsync(c => c.CvId == id);
-
-                if (cv == null)
-                {
-                    return NotFound("CV not found.");
-                }
-
-                if (string.IsNullOrWhiteSpace(cv.ExtractedText))
-                {
-                    return BadRequest("No CV text available for enhancement. Please ensure the CV has been properly processed.");
-                }
-
-                var result = await _cvEnhancerService.EnhanceCvAsync(cv.ExtractedText, dto.JobTitle);
-                
-                var enhancement = new CvEnhancement
-                {
-                    CvId = id,
-                    JobTitle = dto.JobTitle,
-                    Suggestions = result.Suggestions,
-                    EnhancedCvText = result.EnhancedCv,
-                    CreatedAt = DateTime.UtcNow
-                };
-
-                _db.CvEnhancements.Add(enhancement);
-                await _db.SaveChangesAsync();
-
-                return Ok(new
-                {
-                    suggestions = result.Suggestions,
-                    enhancedCvText = result.EnhancedCv
-                });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Error enhancing CV {id}: {ex}");
-                return StatusCode(500, new { message = "An error occurred while enhancing the CV", error = ex.Message });
-            }
+                CvId = id,
+                JobTitle = dto.JobTitle,
+                Suggestions = result.Suggestions,
+                EnhancedCvText = result.EnhancedCv,
+                CreatedAt = DateTime.UtcNow
+            };
+            _db.CvEnhancements.Add(enhancement);
+            await _db.SaveChangesAsync();
+            return Ok(enhancement);
         }
 
         [HttpGet("{id}/enhancement")]
@@ -281,21 +277,35 @@ namespace ClickView.Controllers
         {
             try
             {
-                var cv = await _db.CVs.FindAsync(id);
+                var cv = await _db.CVs
+                    .Include(c => c.Insights)
+                    .FirstOrDefaultAsync(c => c.CvId == id);
+
                 if (cv == null)
                 {
-                    return NotFound(new { message = "CV not found." });
+                    return NotFound("CV not found.");
                 }
 
-                // Delete related records first
-                var insights = await _db.CvInsights.Where(i => i.CvId == id).ToListAsync();
-                var enhancements = await _db.CvEnhancements.Where(e => e.CvId == id).ToListAsync();
+                // Delete the file from disk if it exists
+                if (!string.IsNullOrEmpty(cv.FilePath))
+                {
+                    var fullPath = Path.Combine(Directory.GetCurrentDirectory(), cv.FilePath);
+                    if (System.IO.File.Exists(fullPath))
+                    {
+                        System.IO.File.Delete(fullPath);
+                    }
+                }
 
-                _db.CvInsights.RemoveRange(insights);
-                _db.CvEnhancements.RemoveRange(enhancements);
+                // Delete insights first if they exist
+                if (cv.Insights != null)
+                {
+                    _db.CvInsights.Remove(cv.Insights);
+                }
+
+                // Then delete the CV
                 _db.CVs.Remove(cv);
-
                 await _db.SaveChangesAsync();
+
                 return Ok(new { message = "CV deleted successfully." });
             }
             catch (Exception ex)
@@ -328,11 +338,26 @@ namespace ClickView.Controllers
                     ContentType = originalCv.ContentType,
                     Content = originalCv.Content,
                     ExtractedText = originalCv.ExtractedText,
-                    UploadedAt = DateTime.UtcNow
+                    UploadedAt = DateTime.UtcNow,
+                    IsDefault = false,
+                    Template = originalCv.Template,
+                    FilePath = Path.Combine("Uploads", $"{Guid.NewGuid()}_{originalCv.FileName}")
                 };
 
                 _db.CVs.Add(duplicatedCv);
                 await _db.SaveChangesAsync();
+
+                // Copy the file to the new location
+                if (!string.IsNullOrEmpty(originalCv.FilePath))
+                {
+                    var originalFullPath = Path.Combine(Directory.GetCurrentDirectory(), originalCv.FilePath);
+                    var newFullPath = Path.Combine(Directory.GetCurrentDirectory(), duplicatedCv.FilePath);
+                    
+                    if (System.IO.File.Exists(originalFullPath))
+                    {
+                        System.IO.File.Copy(originalFullPath, newFullPath);
+                    }
+                }
 
                 // If the original CV has insights, copy them too
                 if (originalCv.Insights != null)
@@ -357,8 +382,8 @@ namespace ClickView.Controllers
                     id = duplicatedCv.CvId.ToString(),
                     title = Path.GetFileNameWithoutExtension(duplicatedCv.FileName),
                     lastModified = duplicatedCv.UploadedAt,
-                    template = "Modern", // Default template
-                    isDefault = false, // Default value
+                    template = duplicatedCv.Template,
+                    isDefault = duplicatedCv.IsDefault,
                     contentType = duplicatedCv.ContentType,
                     hasExtractedText = !string.IsNullOrWhiteSpace(duplicatedCv.ExtractedText)
                 });
@@ -467,6 +492,7 @@ namespace ClickView.Controllers
                 cv.FileName = $"{dto.Title}{extension}";
                 cv.UploadedAt = DateTime.UtcNow; // Update the last modified time
                 cv.Template = dto.Template; // Update the template
+                cv.FilePath = Path.Combine("Uploads", cv.FileName); // Update the file path
 
                 // Save changes to the database
                 await _db.SaveChangesAsync();

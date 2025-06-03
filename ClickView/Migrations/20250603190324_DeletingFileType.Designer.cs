@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace ClickView.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20250603083044_FixCvInsightsRelationship")]
-    partial class FixCvInsightsRelationship
+    [Migration("20250603190324_DeletingFileType")]
+    partial class DeletingFileType
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -72,11 +72,7 @@ namespace ClickView.Migrations
                         .IsRequired()
                         .HasColumnType("longtext");
 
-                    b.Property<string>("ErrorMessage")
-                        .HasColumnType("longtext");
-
                     b.Property<string>("ExtractedText")
-                        .IsRequired()
                         .HasColumnType("longtext");
 
                     b.Property<string>("FileName")
@@ -84,14 +80,6 @@ namespace ClickView.Migrations
                         .HasColumnType("longtext");
 
                     b.Property<string>("FilePath")
-                        .IsRequired()
-                        .HasColumnType("longtext");
-
-                    b.Property<long>("FileSize")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("FileType")
-                        .IsRequired()
                         .HasColumnType("longtext");
 
                     b.Property<bool>("IsDefault")
@@ -100,18 +88,11 @@ namespace ClickView.Migrations
                     b.Property<string>("JobTitle")
                         .HasColumnType("longtext");
 
-                    b.Property<DateTime?>("ProcessedDate")
-                        .HasColumnType("datetime(6)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasColumnType("longtext");
-
                     b.Property<string>("Template")
                         .IsRequired()
                         .HasColumnType("longtext");
 
-                    b.Property<DateTime>("UploadDate")
+                    b.Property<DateTime>("UploadedAt")
                         .HasColumnType("datetime(6)");
 
                     b.Property<int>("UserId")
@@ -172,17 +153,17 @@ namespace ClickView.Migrations
                     b.Property<int>("CvId")
                         .HasColumnType("int");
 
-                    b.Property<string>("EnhancedCvJson")
+                    b.Property<string>("EnhancedCvText")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("longtext");
 
                     b.Property<string>("JobTitle")
                         .IsRequired()
                         .HasColumnType("longtext");
 
-                    b.Property<string>("SuggestionsJson")
+                    b.Property<string>("Suggestions")
                         .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                        .HasColumnType("longtext");
 
                     b.HasKey("CvEnhancementId");
 
@@ -531,13 +512,13 @@ namespace ClickView.Migrations
 
             modelBuilder.Entity("ClickView.Models.CvInsights", b =>
                 {
-                    b.HasOne("ClickView.Models.CV", "CV")
+                    b.HasOne("ClickView.Models.CV", "Cv")
                         .WithOne("Insights")
                         .HasForeignKey("ClickView.Models.CvInsights", "CvId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.Navigation("CV");
+                    b.Navigation("Cv");
                 });
 
             modelBuilder.Entity("ClickView.Models.FeedbackReport", b =>

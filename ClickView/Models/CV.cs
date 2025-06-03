@@ -31,6 +31,8 @@ namespace ClickView.Models
 
         public string Template { get; set; } = "Modern"; // Default template
 
+        public string? FilePath { get; set; }
+        
         public ICollection<Interview>? Interviews { get; set; }
 
         public ICollection<CvEnhancement>? Enhancements { get; set; }
