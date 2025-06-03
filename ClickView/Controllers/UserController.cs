@@ -292,6 +292,7 @@ namespace ClickView.Controllers
 
             return Ok(new
             {
+                id = user.UserId,
                 firstName = user.FirstName,
                 lastName = user.LastName,
                 email = user.Email,

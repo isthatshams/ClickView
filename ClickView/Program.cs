@@ -1,4 +1,5 @@
 using ClickView.Data;
+using ClickView.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -34,7 +35,7 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
-
+builder.Services.AddScoped<CvEnhancerService>();
 builder.Services.AddHttpClient();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

@@ -70,7 +70,7 @@ namespace ClickView.Controllers
                 level = level
             };
 
-            var response = await client.PostAsJsonAsync("https://your-ngrok-url.ngrok.io/evaluate-answer", payload);
+            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/evaluate-answer", payload);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<EvaluationResult>();

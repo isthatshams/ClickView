@@ -222,7 +222,7 @@ namespace ClickView.Controllers
                 topic = topic
             };
 
-            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-questions", payload);
+            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-questions", payload);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
@@ -238,7 +238,7 @@ namespace ClickView.Controllers
                 cv_text = $"Job Title: {jobTitle}\n\nCV:\n{extractedText}"
             };
 
-            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-questions", payload);
+            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-questions", payload);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
@@ -260,7 +260,7 @@ namespace ClickView.Controllers
         """
             };
 
-            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-questions", payload);
+            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-questions", payload);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
@@ -339,7 +339,7 @@ namespace ClickView.Controllers
             };
 
             using var client = new HttpClient();
-            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-followup", requestBody);
+            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-followup", requestBody);
             if (!response.IsSuccessStatusCode)
                 return StatusCode((int)response.StatusCode, "Failed to get follow-up question from AI service.");
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
@@ -394,7 +394,7 @@ namespace ClickView.Controllers
                 topic = dto.JobTitle
             };
             using var client = new HttpClient();
-            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-questions", payload);
+            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-questions", payload);
             response.EnsureSuccessStatusCode();
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
             var firstQuestionText = result?["questions"]?.FirstOrDefault();
@@ -449,7 +449,7 @@ namespace ClickView.Controllers
                 last_answer = dto.UserAnswerText
             };
             using var client = new HttpClient();
-            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-followup", payload);
+            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-followup", payload);
             if (!response.IsSuccessStatusCode)
                 return StatusCode((int)response.StatusCode, "Failed to get follow-up question from AI service.");
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
@@ -497,7 +497,7 @@ namespace ClickView.Controllers
                 topic = dto.JobTitle
             };
             using var client = new HttpClient();
-            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-questions", payload);
+            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-questions", payload);
             response.EnsureSuccessStatusCode();
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
             var questions = result?["questions"]?.Take(5).ToList() ?? new List<string>();
@@ -563,7 +563,7 @@ namespace ClickView.Controllers
                 last_answer = dto.UserAnswerText
             };
             using var client = new HttpClient();
-            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-followup", payload);
+            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-followup", payload);
             if (!response.IsSuccessStatusCode)
                 return StatusCode((int)response.StatusCode, "Failed to get follow-up question from AI service.");
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
@@ -626,7 +626,7 @@ namespace ClickView.Controllers
                 last_answer = dto.NewAnswerText
             };
             using var client = new HttpClient();
-            var response = await client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-followup", payload);
+            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-followup", payload);
             if (!response.IsSuccessStatusCode)
                 return StatusCode((int)response.StatusCode, "Failed to get follow-up question from AI service.");
             var result = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
