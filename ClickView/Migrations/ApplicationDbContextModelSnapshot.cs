@@ -50,7 +50,7 @@ namespace ClickView.Migrations
                     b.HasIndex("UserAnswerId")
                         .IsUnique();
 
-                    b.ToTable("AnswerAnalyses");
+                    b.ToTable("AnswerAnalyses", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.CV", b =>
@@ -99,7 +99,7 @@ namespace ClickView.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("CVs");
+                    b.ToTable("CVs", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.CareerReport", b =>
@@ -133,7 +133,7 @@ namespace ClickView.Migrations
 
                     b.HasIndex("InterviewId");
 
-                    b.ToTable("CareerReports");
+                    b.ToTable("CareerReports", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.CvEnhancement", b =>
@@ -166,7 +166,7 @@ namespace ClickView.Migrations
 
                     b.HasIndex("CvId");
 
-                    b.ToTable("CvEnhancements");
+                    b.ToTable("CvEnhancements", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.CvInsights", b =>
@@ -200,7 +200,7 @@ namespace ClickView.Migrations
                     b.HasIndex("CvId")
                         .IsUnique();
 
-                    b.ToTable("CvInsights");
+                    b.ToTable("CvInsights", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.FeedbackReport", b =>
@@ -234,7 +234,7 @@ namespace ClickView.Migrations
 
                     b.HasIndex("InterviewId");
 
-                    b.ToTable("FeedbackReports");
+                    b.ToTable("FeedbackReports", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.Interview", b =>
@@ -269,7 +269,7 @@ namespace ClickView.Migrations
 
                     b.HasIndex("UserId");
 
-                    b.ToTable("Interviews");
+                    b.ToTable("Interviews", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.Question", b =>
@@ -300,7 +300,7 @@ namespace ClickView.Migrations
 
                     b.HasIndex("InterviewId");
 
-                    b.ToTable("Questions");
+                    b.ToTable("Questions", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.RecommendedCourse", b =>
@@ -326,7 +326,7 @@ namespace ClickView.Migrations
 
                     b.HasIndex("CareerReportId");
 
-                    b.ToTable("RecommendedCourses");
+                    b.ToTable("RecommendedCourses", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.ReferencedAnswer", b =>
@@ -349,7 +349,7 @@ namespace ClickView.Migrations
                     b.HasIndex("QuestionId")
                         .IsUnique();
 
-                    b.ToTable("ReferencedAnswers");
+                    b.ToTable("ReferencedAnswers", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.User", b =>
@@ -415,7 +415,7 @@ namespace ClickView.Migrations
 
                     b.HasKey("UserId");
 
-                    b.ToTable("Users");
+                    b.ToTable("Users", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.UserAnswer", b =>
@@ -460,7 +460,7 @@ namespace ClickView.Migrations
 
                     b.HasIndex("QuestionId");
 
-                    b.ToTable("UserAnswers");
+                    b.ToTable("UserAnswers", (string)null);
                 });
 
             modelBuilder.Entity("ClickView.Models.AnswerAnalysis", b =>

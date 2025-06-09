@@ -18,7 +18,7 @@ namespace ClickView.Services
                 ? $"Suggest improvements for the following CV:\n\n{cvText}"
                 : $"Enhance and rewrite this CV to better match the role of {jobTitle}:\n\n{cvText}";
             var payload = new { prompt = prompt };
-            var response = await _client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/enhance-cv", payload);
+            var response = await _client.PostAsJsonAsync("http://127.0.0.1:5000/enhance-cv", payload);
             response.EnsureSuccessStatusCode();
             return await response.Content.ReadFromJsonAsync<CvEnhancementDto>();
         }

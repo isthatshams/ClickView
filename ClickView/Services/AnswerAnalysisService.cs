@@ -18,7 +18,7 @@ namespace ClickView.Services
         public async Task<AnswerAnalysis> AnalyzeAnswerAsync(string answerText)
         {
             var payload = new { answer = answerText };
-            var response = await _client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/analyze-answer", payload);
+            var response = await _client.PostAsJsonAsync("http://127.0.0.1:5000/analyze-answer", payload);
             response.EnsureSuccessStatusCode();
             var result = await response.Content.ReadFromJsonAsync<AnswerAnalysisDto>();
             return new AnswerAnalysis
@@ -45,7 +45,7 @@ namespace ClickView.Services
                         : new List<string>()
                 })
             };
-            var response = await _client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/analyze-interview", payload);
+            var response = await _client.PostAsJsonAsync("http://127.0.0.1:5000/analyze-interview", payload);
             response.EnsureSuccessStatusCode();
             return await response.Content.ReadFromJsonAsync<InterviewSummaryDto>();
         }
@@ -66,7 +66,7 @@ namespace ClickView.Services
                         : new List<string>()
                 })
             };
-            var response = await _client.PostAsJsonAsync("https://7633-34-21-27-65.ngrok-free.app/generate-feedback", payload);
+            var response = await _client.PostAsJsonAsync("http://127.0.0.1:5000/generate-feedback", payload);
             response.EnsureSuccessStatusCode();
             return await response.Content.ReadFromJsonAsync<FeedbackReportDto>();
         }

@@ -13,7 +13,6 @@ namespace ClickView.Controllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize]
-
     public class InterviewController : ControllerBase
     {
         private readonly ApplicationDbContext _db;
@@ -75,7 +74,6 @@ namespace ClickView.Controllers
             }
             else
             {
-                //No CV: use job title as GPT topic
                 questionsFromGPT = await GetQuestionsFromChatGPT(normalizedLevel, dto.JobTitle);
             }
 
@@ -139,6 +137,7 @@ namespace ClickView.Controllers
             return Ok(new { message = "Answer submitted", answerId = answer.UserAnswerId });
         }
 
+        // Retrieves full detailed data about a single interview 
         [HttpGet("{id}")]
         public IActionResult GetInterview(int id)
         {
@@ -172,6 +171,7 @@ namespace ClickView.Controllers
 
             return Ok(interview);
         }
+        // Returns a summary list of all interviews taken by a specific user
         [HttpGet("user/{userId}")]
         public IActionResult GetUserInterviews(int userId)
         {

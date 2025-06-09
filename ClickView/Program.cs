@@ -35,6 +35,7 @@ builder.Services.AddAuthentication(options =>
     };
 });
 
+builder.Services.AddScoped<AnswerAnalysisService>();
 builder.Services.AddScoped<CvEnhancerService>();
 builder.Services.AddHttpClient();
 builder.Services.AddControllers();
