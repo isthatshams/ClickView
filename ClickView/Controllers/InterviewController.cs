@@ -172,6 +172,7 @@ namespace ClickView.Controllers
             return Ok(interview);
         }
         // Returns a summary list of all interviews taken by a specific user
+        [Authorize]
         [HttpGet("user/{userId}")]
         public IActionResult GetUserInterviews(int userId)
         {
@@ -511,7 +512,16 @@ namespace ClickView.Controllers
             }).ToList();
             _db.Questions.AddRange(initialQuestions);
             await _db.SaveChangesAsync();
-            return Ok(new { interviewId = interview.InterviewId, questions = initialQuestions.Select(q => new { q.QuestionId, q.QuestionText }) });
+            return Ok(new { 
+                interviewId = interview.InterviewId, 
+                questions = initialQuestions.Select(q => new { 
+                    q.QuestionId, 
+                    q.QuestionText,
+                    q.DifficultyLevel,
+                    q.QuestionMark,
+                    q.ParentQuestionId
+                }).ToList()
+            });
         }
 
         [HttpPost("chat/answer-next")]

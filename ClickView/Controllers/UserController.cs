@@ -14,6 +14,7 @@ using System.Net.Mail;
 using System.Net;
 using Microsoft.AspNetCore.Http;
 using System.IO;
+using Google.Apis.Auth;
 
 namespace ClickView.Controllers
 {
@@ -407,6 +408,110 @@ namespace ClickView.Controllers
                 showActivity = user.ShowActivity,
                 showProgress = user.ShowProgress
             });
+        }
+
+        [HttpPost("google-auth")]
+        public async Task<IActionResult> GoogleAuth([FromBody] GoogleAuthDto dto)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(dto.Credential))
+                {
+                    Console.WriteLine("Google auth failed: Missing credential");
+                    return BadRequest(new { message = "Missing Google credential" });
+                }
+
+                Console.WriteLine($"Received Google credential: {dto.Credential.Substring(0, 20)}...");
+
+                GoogleJsonWebSignature.Payload payload;
+                try
+                {
+                    payload = await GoogleJsonWebSignature.ValidateAsync(dto.Credential);
+                    Console.WriteLine($"Successfully validated Google token for email: {payload.Email}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Google token validation failed: {ex.Message}");
+                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                    return Unauthorized(new { message = "Invalid Google token", details = ex.Message });
+                }
+
+                // Check if email exists
+                var existingUser = await _db.Users.FirstOrDefaultAsync(u => u.Email == payload.Email);
+                if (existingUser != null)
+                {
+                    Console.WriteLine($"Found existing user with email: {payload.Email}");
+                    // User exists, generate tokens
+                    var accessToken = GenerateJwtToken(existingUser);
+                    var refreshToken = GenerateRefreshToken();
+                    
+                    existingUser.RefreshToken = refreshToken;
+                    existingUser.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
+                    await _db.SaveChangesAsync();
+
+                    return Ok(new
+                    {
+                        token = accessToken,
+                        refreshToken,
+                        expiresIn = 3600,
+                        message = "Login successful"
+                    });
+                }
+
+                Console.WriteLine($"Creating new user for email: {payload.Email}");
+                // Generate a secure random password for Google users
+                var randomPassword = Convert.ToBase64String(Guid.NewGuid().ToByteArray());
+                var hashedPassword = HashPassword(randomPassword);
+
+                // Create new user
+                var newUser = new User
+                {
+                    FirstName = payload.GivenName ?? "",
+                    LastName = payload.FamilyName ?? "",
+                    Email = payload.Email,
+                    PasswordHash = hashedPassword,
+                    IsActive = true,
+                    IsEmailVerified = true, // Google emails are verified
+                    ShowProfile = true,
+                    ShowActivity = true,
+                    ShowProgress = true
+                };
+
+                try
+                {
+                    _db.Users.Add(newUser);
+                    await _db.SaveChangesAsync();
+                    Console.WriteLine($"Successfully created new user with ID: {newUser.UserId}");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Failed to create new user: {ex.Message}");
+                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                    throw;
+                }
+
+                // Generate tokens for new user
+                var newAccessToken = GenerateJwtToken(newUser);
+                var newRefreshToken = GenerateRefreshToken();
+                
+                newUser.RefreshToken = newRefreshToken;
+                newUser.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
+                await _db.SaveChangesAsync();
+
+                return Ok(new
+                {
+                    token = newAccessToken,
+                    refreshToken = newRefreshToken,
+                    expiresIn = 3600,
+                    message = "Registration successful"
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Unexpected error in Google auth: {ex.Message}");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return StatusCode(500, new { message = "An error occurred during Google authentication", details = ex.Message });
+            }
         }
     }
 }

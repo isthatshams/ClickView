@@ -38,7 +38,15 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddScoped<AnswerAnalysisService>();
 builder.Services.AddScoped<CvEnhancerService>();
 builder.Services.AddHttpClient();
-builder.Services.AddControllers();
+
+// Configure JSON options
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.PropertyNamingPolicy = null;
+        options.JsonSerializerOptions.WriteIndented = true;
+    });
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddCors(options =>
@@ -50,12 +58,15 @@ builder.Services.AddCors(options =>
                         .AllowCredentials());
 });
 
-
-
 var app = builder.Build();
 
-app.UseSwagger();
-app.UseSwaggerUI();
+// Configure the HTTP request pipeline
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+
 app.UseCors("AllowFrontend");
 
 // Configure static files
@@ -65,10 +76,27 @@ app.UseStaticFiles(new StaticFileOptions
     DefaultContentType = "application/octet-stream"
 });
 
-app.UseAuthentication(); // must come before UseAuthorization
+// Global error handling
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        context.Response.StatusCode = 500;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsJsonAsync(new { error = ex.Message });
+    }
+});
+
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Database migration
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
@@ -87,10 +115,9 @@ using (var scope = app.Services.CreateScope())
             retries--;
             Console.WriteLine($"DB not ready. Retries left: {retries}");
             Console.WriteLine(ex.Message);
-            Thread.Sleep(5000); // wait 5 seconds
+            Thread.Sleep(5000);
         }
     }
 }
-
 
 app.Run();
