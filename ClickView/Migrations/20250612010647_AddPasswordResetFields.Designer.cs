@@ -4,6 +4,7 @@ using ClickView.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace ClickView.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250612010647_AddPasswordResetFields")]
+    partial class AddPasswordResetFields
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -381,9 +384,6 @@ namespace ClickView.Migrations
                         .IsRequired()
                         .HasColumnType("longtext");
 
-                    b.Property<DateTime?>("LastPasswordResetEmailSentAt")
-                        .HasColumnType("datetime(6)");
-
                     b.Property<DateTime?>("LastVerificationEmailSentAt")
                         .HasColumnType("datetime(6)");
 
@@ -391,10 +391,10 @@ namespace ClickView.Migrations
                         .IsRequired()
                         .HasColumnType("longtext");
 
-                    b.Property<string>("PasswordResetCode")
+                    b.Property<string>("PasswordResetToken")
                         .HasColumnType("longtext");
 
-                    b.Property<DateTime?>("PasswordResetCodeExpiry")
+                    b.Property<DateTime?>("PasswordResetTokenExpiry")
                         .HasColumnType("datetime(6)");
 
                     b.Property<string>("ProfessionalTitle")
