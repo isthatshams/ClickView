@@ -543,133 +543,296 @@ namespace ClickView.Controllers
         [HttpPost("chat/answer-next")]
         public async Task<IActionResult> SubmitChatAnswerAndGetFollowup([FromBody] TextAnswerNextDto dto)
         {
-            // Find interview and question
-            var interview = _db.Interviews.Include(i => i.Questions).Include(i => i.UserAnswers).FirstOrDefault(i => i.InterviewId == dto.InterviewId && i.InterviewType == InterviewType.Chat);
-            if (interview == null) return NotFound("Interview not found.");
-            var question = interview.Questions.FirstOrDefault(q => q.QuestionId == dto.QuestionId);
-            if (question == null) return NotFound("Question not found.");
-            // Save or update answer
-            var answer = interview.UserAnswers.FirstOrDefault(a => a.QuestionId == dto.QuestionId);
-            if (answer == null)
+            try
             {
-                answer = new UserAnswer
+                // Find interview and question
+                var interview = _db.Interviews.Include(i => i.Questions).Include(i => i.UserAnswers).FirstOrDefault(i => i.InterviewId == dto.InterviewId && i.InterviewType == InterviewType.Chat);
+                if (interview == null) return NotFound("Interview not found.");
+                
+                var question = interview.Questions.FirstOrDefault(q => q.QuestionId == dto.QuestionId);
+                if (question == null) return NotFound("Question not found.");
+                
+                // Save or update answer
+                var answer = interview.UserAnswers.FirstOrDefault(a => a.QuestionId == dto.QuestionId);
+                if (answer == null)
                 {
-                    InterviewId = dto.InterviewId,
-                    QuestionId = dto.QuestionId,
-                    UserAnswerText = dto.UserAnswerText
+                    answer = new UserAnswer
+                    {
+                        InterviewId = dto.InterviewId,
+                        QuestionId = dto.QuestionId,
+                        UserAnswerText = dto.UserAnswerText
+                    };
+                    _db.UserAnswers.Add(answer);
+                    await _db.SaveChangesAsync();
+                    // Analyze answer
+                    var analysis = await _analysisService.AnalyzeAnswerAsync(dto.UserAnswerText);
+                    analysis.UserAnswerId = answer.UserAnswerId;
+                    _db.AnswerAnalyses.Add(analysis);
+                    answer.AnswerAnalysisId = analysis.AnswerAnalysisId;
+                    await _db.SaveChangesAsync();
+                }
+                else
+                {
+                    answer.UserAnswerText = dto.UserAnswerText;
+                    await _db.SaveChangesAsync();
+                    // Re-analyze answer
+                    var analysis = await _analysisService.AnalyzeAnswerAsync(dto.UserAnswerText);
+                    analysis.UserAnswerId = answer.UserAnswerId;
+                    _db.AnswerAnalyses.Add(analysis);
+                    answer.AnswerAnalysisId = analysis.AnswerAnalysisId;
+                    await _db.SaveChangesAsync();
+                }
+                
+                // Generate follow-up for this question branch
+                var payload = new
+                {
+                    job_title = interview.CV?.JobTitle ?? "",
+                    level = question.DifficultyLevel.ToString().ToLower(),
+                    cv_text = interview.CV?.ExtractedText ?? "",
+                    previous_qa = new[] { new { question = question.QuestionText, answer = dto.UserAnswerText } },
+                    last_question = question.QuestionText,
+                    last_answer = dto.UserAnswerText
                 };
-                _db.UserAnswers.Add(answer);
-                await _db.SaveChangesAsync();
-                // Analyze answer
-                var analysis = await _analysisService.AnalyzeAnswerAsync(dto.UserAnswerText);
-                analysis.UserAnswerId = answer.UserAnswerId;
-                _db.AnswerAnalyses.Add(analysis);
-                answer.AnswerAnalysisId = analysis.AnswerAnalysisId;
-                await _db.SaveChangesAsync();
+                
+                using var client = new HttpClient();
+                client.Timeout = TimeSpan.FromSeconds(30);
+                
+                var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-followup", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    return StatusCode((int)response.StatusCode, $"Failed to get follow-up question from AI service: {errorContent}");
+                }
+                
+                var result = await response.Content.ReadFromJsonAsync<Dictionary<string, object>>();
+                
+                // Handle the should_continue logic
+                var shouldContinue = result?.GetValueOrDefault("should_continue");
+                var reason = result?.GetValueOrDefault("reason")?.ToString() ?? "";
+                var followupText = result?.GetValueOrDefault("question")?.ToString() ?? "";
+                
+                if (shouldContinue != null && !Convert.ToBoolean(shouldContinue))
+                {
+                    // AI determined the answer is sufficient - move to next main question
+                    // Find the next main question (no parent question)
+                    var allQuestions = interview.Questions.OrderBy(q => q.QuestionId).ToList();
+                    var currentQuestionIndex = allQuestions.FindIndex(q => q.QuestionId == dto.QuestionId);
+                    var nextMainQuestion = allQuestions
+                        .Skip(currentQuestionIndex + 1)
+                        .FirstOrDefault(q => q.ParentQuestionId == null);
+                    
+                    if (nextMainQuestion != null)
+                    {
+                        return Ok(new { 
+                            should_continue = false, 
+                            reason = reason,
+                            message = "Answer accepted. Moving to next question.",
+                            next_question_id = nextMainQuestion.QuestionId,
+                            next_question_text = nextMainQuestion.QuestionText
+                        });
+                    }
+                    else
+                    {
+                        // No more main questions - interview completed
+                        interview.IsFinished = true;
+                        interview.FinishedAt = DateTime.Now;
+                        await _db.SaveChangesAsync();
+                        
+                        return Ok(new { 
+                            should_continue = false, 
+                            reason = reason,
+                            message = "Interview completed - all questions answered satisfactorily.",
+                            interview_completed = true
+                        });
+                    }
+                }
+                else if (shouldContinue != null && Convert.ToBoolean(shouldContinue) && !string.IsNullOrWhiteSpace(followupText))
+                {
+                    // AI wants to continue with a follow-up question
+                    var followupQuestion = new Question
+                    {
+                        QuestionText = followupText,
+                        DifficultyLevel = question.DifficultyLevel,
+                        QuestionMark = 5,
+                        InterviewId = interview.InterviewId,
+                        ParentQuestionId = question.QuestionId
+                    };
+                    _db.Questions.Add(followupQuestion);
+                    await _db.SaveChangesAsync();
+                    
+                    return Ok(new { 
+                        should_continue = true, 
+                        reason = reason,
+                        question = followupText, 
+                        questionId = followupQuestion.QuestionId 
+                    });
+                }
+                else
+                {
+                    // Fallback: no follow-up question or should_continue not provided
+                    return Ok(new { 
+                        should_continue = false, 
+                        reason = "No follow-up question generated",
+                        message = "No follow-up question" 
+                    });
+                }
             }
-            else
+            catch (Exception ex)
             {
-                answer.UserAnswerText = dto.UserAnswerText;
-                await _db.SaveChangesAsync();
-                // Re-analyze answer
-                var analysis = await _analysisService.AnalyzeAnswerAsync(dto.UserAnswerText);
-                analysis.UserAnswerId = answer.UserAnswerId;
-                _db.AnswerAnalyses.Add(analysis);
-                answer.AnswerAnalysisId = analysis.AnswerAnalysisId;
-                await _db.SaveChangesAsync();
+                // Log the exception details
+                Console.WriteLine($"Error in SubmitChatAnswerAndGetFollowup: {ex.Message}");
+                Console.WriteLine($"StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { error = "Internal server error", details = ex.Message });
             }
-            // Generate follow-up for this question branch
-            var payload = new
-            {
-                job_title = interview.CV?.JobTitle ?? "",
-                level = question.DifficultyLevel.ToString().ToLower(),
-                cv_text = interview.CV?.ExtractedText ?? "",
-                previous_qa = new[] { new { question = question.QuestionText, answer = dto.UserAnswerText } },
-                last_question = question.QuestionText,
-                last_answer = dto.UserAnswerText
-            };
-            using var client = new HttpClient();
-            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-followup", payload);
-            if (!response.IsSuccessStatusCode)
-                return StatusCode((int)response.StatusCode, "Failed to get follow-up question from AI service.");
-            var result = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
-            var followupText = result?["question"] ?? "";
-            if (string.IsNullOrWhiteSpace(followupText))
-                return Ok(new { message = "No follow-up question" });
-            var followupQuestion = new Question
-            {
-                QuestionText = followupText,
-                DifficultyLevel = question.DifficultyLevel,
-                QuestionMark = 5,
-                InterviewId = interview.InterviewId,
-                ParentQuestionId = question.QuestionId
-            };
-            _db.Questions.Add(followupQuestion);
-            await _db.SaveChangesAsync();
-            return Ok(new { question = followupText, questionId = followupQuestion.QuestionId });
         }
 
         [HttpPost("chat/edit-answer")]
         public async Task<IActionResult> EditChatAnswerAndRegenerateBranch([FromBody] EditTextAnswerDto dto)
         {
-            // Find interview and question
-            var interview = _db.Interviews.Include(i => i.Questions).Include(i => i.UserAnswers).FirstOrDefault(i => i.InterviewId == dto.InterviewId && i.InterviewType == InterviewType.Chat);
-            if (interview == null) return NotFound("Interview not found.");
-            var question = interview.Questions.FirstOrDefault(q => q.QuestionId == dto.QuestionId);
-            if (question == null) return NotFound("Question not found.");
-            // Update answer
-            var answer = interview.UserAnswers.FirstOrDefault(a => a.QuestionId == dto.QuestionId);
-            if (answer == null)
-                return NotFound("Answer not found.");
-            answer.UserAnswerText = dto.NewAnswerText;
-            await _db.SaveChangesAsync();
-            // Delete all descendant follow-up questions and answers
-            var toDeleteQuestions = new List<Question>();
-            var toDeleteAnswers = new List<UserAnswer>();
-            void CollectDescendants(int parentId)
+            try
             {
-                var children = interview.Questions.Where(q => q.ParentQuestionId == parentId).ToList();
-                foreach (var child in children)
+                // Validate input
+                if (dto == null)
+                    return BadRequest("Request body is null");
+                
+                if (string.IsNullOrWhiteSpace(dto.NewAnswerText))
+                    return BadRequest("NewAnswerText is required");
+
+                // Find interview and question
+                var interview = _db.Interviews.Include(i => i.Questions).Include(i => i.UserAnswers).FirstOrDefault(i => i.InterviewId == dto.InterviewId && i.InterviewType == InterviewType.Chat);
+                if (interview == null) return NotFound("Interview not found.");
+                
+                var question = interview.Questions.FirstOrDefault(q => q.QuestionId == dto.QuestionId);
+                if (question == null) return NotFound("Question not found.");
+                
+                // Update answer
+                var answer = interview.UserAnswers.FirstOrDefault(a => a.QuestionId == dto.QuestionId);
+                if (answer == null)
+                    return NotFound("Answer not found.");
+                    
+                answer.UserAnswerText = dto.NewAnswerText;
+                await _db.SaveChangesAsync();
+                
+                // Delete all descendant follow-up questions and answers
+                var toDeleteQuestions = new List<Question>();
+                var toDeleteAnswers = new List<UserAnswer>();
+                void CollectDescendants(int parentId)
                 {
-                    toDeleteQuestions.Add(child);
-                    var childAnswer = interview.UserAnswers.FirstOrDefault(a => a.QuestionId == child.QuestionId);
-                    if (childAnswer != null) toDeleteAnswers.Add(childAnswer);
-                    CollectDescendants(child.QuestionId);
+                    var children = interview.Questions.Where(q => q.ParentQuestionId == parentId).ToList();
+                    foreach (var child in children)
+                    {
+                        toDeleteQuestions.Add(child);
+                        var childAnswer = interview.UserAnswers.FirstOrDefault(a => a.QuestionId == child.QuestionId);
+                        if (childAnswer != null) toDeleteAnswers.Add(childAnswer);
+                        CollectDescendants(child.QuestionId);
+                    }
+                }
+                CollectDescendants(dto.QuestionId);
+                _db.UserAnswers.RemoveRange(toDeleteAnswers);
+                _db.Questions.RemoveRange(toDeleteQuestions);
+                await _db.SaveChangesAsync();
+                
+                // Generate new follow-up for the edited answer
+                var payload = new
+                {
+                    job_title = interview.CV?.JobTitle ?? "",
+                    level = question.DifficultyLevel.ToString().ToLower(),
+                    cv_text = interview.CV?.ExtractedText ?? "",
+                    previous_qa = new[] { new { question = question.QuestionText, answer = dto.NewAnswerText } },
+                    last_question = question.QuestionText,
+                    last_answer = dto.NewAnswerText
+                };
+                
+                using var client = new HttpClient();
+                client.Timeout = TimeSpan.FromSeconds(30); // Add timeout
+                
+                var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-followup", payload);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorContent = await response.Content.ReadAsStringAsync();
+                    return StatusCode((int)response.StatusCode, $"Failed to get follow-up question from AI service: {errorContent}");
+                }
+                
+                var result = await response.Content.ReadFromJsonAsync<Dictionary<string, object>>();
+                
+                // Handle the should_continue logic
+                var shouldContinue = result?.GetValueOrDefault("should_continue");
+                var reason = result?.GetValueOrDefault("reason")?.ToString() ?? "";
+                var followupText = result?.GetValueOrDefault("question")?.ToString() ?? "";
+                
+                if (shouldContinue != null && !Convert.ToBoolean(shouldContinue))
+                {
+                    // AI determined the answer is sufficient - move to next main question
+                    // Find the next main question (no parent question)
+                    var allQuestions = interview.Questions.OrderBy(q => q.QuestionId).ToList();
+                    var currentQuestionIndex = allQuestions.FindIndex(q => q.QuestionId == dto.QuestionId);
+                    var nextMainQuestion = allQuestions
+                        .Skip(currentQuestionIndex + 1)
+                        .FirstOrDefault(q => q.ParentQuestionId == null);
+                    
+                    if (nextMainQuestion != null)
+                    {
+                        return Ok(new { 
+                            should_continue = false, 
+                            reason = reason,
+                            message = "Answer accepted. Moving to next question.",
+                            next_question_id = nextMainQuestion.QuestionId,
+                            next_question_text = nextMainQuestion.QuestionText
+                        });
+                    }
+                    else
+                    {
+                        // No more main questions - interview completed
+                        interview.IsFinished = true;
+                        interview.FinishedAt = DateTime.Now;
+                        await _db.SaveChangesAsync();
+                        
+                        return Ok(new { 
+                            should_continue = false, 
+                            reason = reason,
+                            message = "Interview completed - all questions answered satisfactorily.",
+                            interview_completed = true
+                        });
+                    }
+                }
+                else if (shouldContinue != null && Convert.ToBoolean(shouldContinue) && !string.IsNullOrWhiteSpace(followupText))
+                {
+                    // AI wants to continue with a follow-up question
+                    var followupQuestion = new Question
+                    {
+                        QuestionText = followupText,
+                        DifficultyLevel = question.DifficultyLevel,
+                        QuestionMark = 5,
+                        InterviewId = interview.InterviewId,
+                        ParentQuestionId = question.QuestionId
+                    };
+                    _db.Questions.Add(followupQuestion);
+                    await _db.SaveChangesAsync();
+                    
+                    return Ok(new { 
+                        should_continue = true, 
+                        reason = reason,
+                        question = followupText, 
+                        questionId = followupQuestion.QuestionId 
+                    });
+                }
+                else
+                {
+                    // Fallback: no follow-up question or should_continue not provided
+                    return Ok(new { 
+                        should_continue = false, 
+                        reason = "No follow-up question generated",
+                        message = "No follow-up question" 
+                    });
                 }
             }
-            CollectDescendants(dto.QuestionId);
-            _db.UserAnswers.RemoveRange(toDeleteAnswers);
-            _db.Questions.RemoveRange(toDeleteQuestions);
-            await _db.SaveChangesAsync();
-            // Generate new follow-up for the edited answer
-            var payload = new
+            catch (Exception ex)
             {
-                job_title = interview.CV?.JobTitle ?? "",
-                level = question.DifficultyLevel.ToString().ToLower(),
-                cv_text = interview.CV?.ExtractedText ?? "",
-                previous_qa = new[] { new { question = question.QuestionText, answer = dto.NewAnswerText } },
-                last_question = question.QuestionText,
-                last_answer = dto.NewAnswerText
-            };
-            using var client = new HttpClient();
-            var response = await client.PostAsJsonAsync("http://127.0.0.1:5000/generate-followup", payload);
-            if (!response.IsSuccessStatusCode)
-                return StatusCode((int)response.StatusCode, "Failed to get follow-up question from AI service.");
-            var result = await response.Content.ReadFromJsonAsync<Dictionary<string, string>>();
-            var followupText = result?["question"] ?? "";
-            if (string.IsNullOrWhiteSpace(followupText))
-                return Ok(new { message = "No follow-up question" });
-            var followupQuestion = new Question
-            {
-                QuestionText = followupText,
-                DifficultyLevel = question.DifficultyLevel,
-                QuestionMark = 5,
-                InterviewId = interview.InterviewId,
-                ParentQuestionId = question.QuestionId
-            };
-            _db.Questions.Add(followupQuestion);
-            await _db.SaveChangesAsync();
-            return Ok(new { question = followupText, questionId = followupQuestion.QuestionId });
+                // Log the exception details
+                Console.WriteLine($"Error in EditChatAnswerAndRegenerateBranch: {ex.Message}");
+                Console.WriteLine($"StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { error = "Internal server error", details = ex.Message });
+            }
         }
 
         [HttpGet("{interviewId}/summary/ai")]

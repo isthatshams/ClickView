@@ -152,10 +152,15 @@ namespace ClickView.Controllers
             user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(7);
             await _db.SaveChangesAsync();
 
+            // Get the JWT expiry time from configuration
+            var jwtSettings = _configuration.GetSection("Jwt");
+            var expiresInMinutes = double.Parse(jwtSettings["ExpireMinutes"]);
+
             return Ok(new
             {
                 accessToken = newAccessToken,
-                refreshToken = newRefreshToken
+                refreshToken = newRefreshToken,
+                expiresIn = expiresInMinutes * 60 // Convert minutes to seconds
             });
         }
         private string HashPassword(string password)
