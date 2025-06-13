@@ -11,7 +11,9 @@ namespace ClickView.Models
         public InterviewType InterviewType { get; set; }
 
         public double InterviewMark { get; set; }
-        public DateTime StartedAt { get; set; } = DateTime.UtcNow;
+        public DateTime StartedAt { get; set; } = DateTime.Now;
+        public DateTime? FinishedAt { get; set; }
+        public bool IsFinished { get; set; } = false;
         public int? OriginalInterviewId { get; set; }
 
         [ForeignKey(nameof(User))]

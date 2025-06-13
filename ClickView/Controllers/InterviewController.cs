@@ -149,12 +149,16 @@ namespace ClickView.Controllers
                     i.InterviewType,
                     i.InterviewMark,
                     i.UserId,
+                    StartedAt = i.StartedAt.ToString("yyyy-MM-ddTHH:mm:ss.fff"), // Return local time format
+                    FinishedAt = i.FinishedAt.HasValue ? i.FinishedAt.Value.ToString("yyyy-MM-ddTHH:mm:ss.fff") : null,
+                    i.IsFinished,
                     Questions = i.Questions.Select(q => new
                     {
                         q.QuestionId,
                         q.QuestionText,
                         q.DifficultyLevel,
-                        q.QuestionMark
+                        q.QuestionMark,
+                        q.ParentQuestionId
                     }),
                     Answers = i.UserAnswers.Select(a => new
                     {
@@ -169,6 +173,10 @@ namespace ClickView.Controllers
             if (interview == null)
                 return NotFound("Interview not found.");
 
+            // Log the start time being sent to frontend
+            Console.WriteLine($"Sending interview {id} StartedAt to frontend: {interview.StartedAt}");
+            Console.WriteLine($"Current local time: {DateTime.Now:yyyy-MM-ddTHH:mm:ss.fff}");
+
             return Ok(interview);
         }
         // Returns a summary list of all interviews taken by a specific user
@@ -181,12 +189,15 @@ namespace ClickView.Controllers
 
             var interviews = _db.Interviews
                 .Where(i => i.UserId == userId)
+                .OrderByDescending(i => i.StartedAt)
                 .Select(i => new
                 {
                     i.InterviewId,
                     i.InterviewType,
                     i.InterviewMark,
-                    StartedAt = i.StartedAt,
+                    StartedAt = i.StartedAt.ToString("yyyy-MM-ddTHH:mm:ss.fff"), // Return local time format
+                    FinishedAt = i.FinishedAt.HasValue ? i.FinishedAt.Value.ToString("yyyy-MM-ddTHH:mm:ss.fff") : null,
+                    i.IsFinished,
                     QuestionCount = i.Questions.Count,
                     AnswerCount = i.UserAnswers.Count
                 })
@@ -485,11 +496,16 @@ namespace ClickView.Controllers
                 UserId = dto.UserId,
                 InterviewType = InterviewType.Chat,
                 CvId = dto.CvId,
+                StartedAt = DateTime.UtcNow,
                 Questions = new List<Question>(),
                 UserAnswers = new List<UserAnswer>()
             };
             _db.Interviews.Add(interview);
             await _db.SaveChangesAsync();
+            
+            // Log the start time for debugging
+            Console.WriteLine($"Interview {interview.InterviewId} started at: {interview.StartedAt:yyyy-MM-dd HH:mm:ss} UTC");
+            Console.WriteLine($"Current UTC time: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss}");
             // Generate initial batch of questions (3–5, diverse topics)
             var payload = new
             {
@@ -695,6 +711,60 @@ namespace ClickView.Controllers
             _db.FeedbackReports.Add(report);
             await _db.SaveChangesAsync();
             return Ok(report);
+        }
+
+        [HttpPost("{interviewId}/end")]
+        public async Task<IActionResult> EndInterview(int interviewId)
+        {
+            var interview = await _db.Interviews.FindAsync(interviewId);
+            if (interview == null)
+                return NotFound("Interview not found.");
+
+            if (interview.IsFinished)
+                return BadRequest("Interview is already finished.");
+
+            interview.IsFinished = true;
+            interview.FinishedAt = DateTime.Now;
+            await _db.SaveChangesAsync();
+
+            return Ok(new { message = "Interview ended successfully", interviewId = interview.InterviewId, finishedAt = interview.FinishedAt });
+        }
+
+        [HttpPost("check-expiration")]
+        public async Task<IActionResult> CheckAndExpireInterviews()
+        {
+            try
+            {
+                var cutoffTime = DateTime.Now.Subtract(TimeSpan.FromMinutes(45));
+                
+                // Find interviews that started more than 45 minutes ago and are not finished
+                var expiredInterviews = await _db.Interviews
+                    .Where(i => i.StartedAt <= cutoffTime && !i.IsFinished)
+                    .ToListAsync();
+
+                if (expiredInterviews.Any())
+                {
+                    foreach (var interview in expiredInterviews)
+                    {
+                        interview.IsFinished = true;
+                        interview.FinishedAt = DateTime.Now;
+                    }
+
+                    await _db.SaveChangesAsync();
+                    
+                    return Ok(new { 
+                        message = $"Successfully expired {expiredInterviews.Count} interviews",
+                        expiredCount = expiredInterviews.Count,
+                        expiredInterviews = expiredInterviews.Select(i => new { i.InterviewId, i.StartedAt, i.FinishedAt })
+                    });
+                }
+
+                return Ok(new { message = "No interviews to expire", expiredCount = 0 });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { error = "Error checking interview expiration", details = ex.Message });
+            }
         }
     }
 }

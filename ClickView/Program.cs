@@ -39,6 +39,9 @@ builder.Services.AddScoped<AnswerAnalysisService>();
 builder.Services.AddScoped<CvEnhancerService>();
 builder.Services.AddHttpClient();
 
+// Add background services
+builder.Services.AddHostedService<InterviewExpirationService>();
+
 // Configure JSON options
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
