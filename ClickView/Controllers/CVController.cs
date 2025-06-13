@@ -234,14 +234,69 @@ namespace ClickView.Controllers
         }
 
         [HttpGet("{id}/enhancement")]
-        public IActionResult GetLatestEnhancement(int id)
+        public async Task<IActionResult> GetLatestEnhancement(int id)
         {
-            var enhancement = _db.CvEnhancements
-                .Where(e => e.CvId == id)
+            return await GetLatestEnhancement(id, null);
+        }
+
+        [HttpGet("{id}/enhancement/{jobTitle}")]
+        public async Task<IActionResult> GetLatestEnhancement(int id, string jobTitle)
+        {
+            // First, check if the CV exists
+            var cv = await _db.CVs.Include(c => c.Insights).FirstOrDefaultAsync(c => c.CvId == id);
+            if (cv == null) return NotFound("CV not found.");
+
+            // Check if there's an existing enhancement for this job title (or general if no job title)
+            var existingEnhancement = await _db.CvEnhancements
+                .Where(e => e.CvId == id && (string.IsNullOrEmpty(jobTitle) ? e.JobTitle == "General Enhancement" : e.JobTitle == jobTitle))
                 .OrderByDescending(e => e.CreatedAt)
-                .FirstOrDefault();
-            if (enhancement == null) return NotFound("No enhancement found.");
-            return Ok(enhancement);
+                .FirstOrDefaultAsync();
+
+            if (existingEnhancement != null)
+            {
+                // Return the existing enhancement
+                return Ok(existingEnhancement);
+            }
+
+            // If no enhancement exists, automatically create one
+            try
+            {
+                // Get CV text for enhancement
+                var cvText = !string.IsNullOrWhiteSpace(cv.ExtractedText)
+                    ? cv.ExtractedText
+                    : cv.Insights != null
+                        ? $"{cv.Insights.TechnicalSkills}\n{cv.Insights.ToolsAndTechnologies}\n{cv.Insights.SoftSkills}\n{cv.Insights.Certifications}\n{cv.Insights.ExperienceSummary}"
+                        : null;
+
+                if (string.IsNullOrWhiteSpace(cvText))
+                {
+                    return BadRequest("No CV text or insights available for enhancement.");
+                }
+
+                // Call the AI service to enhance the CV
+                var result = await _cvEnhancerService.EnhanceCvAsync(cvText, jobTitle);
+
+                // Create and save the enhancement
+                var enhancement = new CvEnhancement
+                {
+                    CvId = id,
+                    JobTitle = string.IsNullOrEmpty(jobTitle) ? "General Enhancement" : jobTitle,
+                    Suggestions = result.Suggestions,
+                    EnhancedCvText = result.EnhancedCv,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                _db.CvEnhancements.Add(enhancement);
+                await _db.SaveChangesAsync();
+
+                return Ok(enhancement);
+            }
+            catch (Exception ex)
+            {
+                // Log the error and return a meaningful response
+                Console.WriteLine($"Error creating enhancement for CV {id}: {ex}");
+                return StatusCode(500, new { message = "An error occurred while creating the enhancement", error = ex.Message });
+            }
         }
 
         [HttpGet("{id}/enhancement/pdf")]
@@ -514,6 +569,30 @@ namespace ClickView.Controllers
                 Console.WriteLine($"Error updating CV {id}: {ex}");
                 return StatusCode(500, new { message = "An error occurred while updating the CV", error = ex.Message });
             }
+        }
+
+        [HttpGet("{id}/enhancements")]
+        public async Task<IActionResult> GetAllEnhancements(int id)
+        {
+            // Check if the CV exists
+            var cv = await _db.CVs.FirstOrDefaultAsync(c => c.CvId == id);
+            if (cv == null) return NotFound("CV not found.");
+
+            // Get all enhancements for this CV
+            var enhancements = await _db.CvEnhancements
+                .Where(e => e.CvId == id)
+                .OrderByDescending(e => e.CreatedAt)
+                .Select(e => new
+                {
+                    e.CvEnhancementId,
+                    e.JobTitle,
+                    e.Suggestions,
+                    e.EnhancedCvText,
+                    e.CreatedAt
+                })
+                .ToListAsync();
+
+            return Ok(enhancements);
         }
     }
 }

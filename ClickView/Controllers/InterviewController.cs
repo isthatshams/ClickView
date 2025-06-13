@@ -606,12 +606,31 @@ namespace ClickView.Controllers
                 
                 var result = await response.Content.ReadFromJsonAsync<Dictionary<string, object>>();
                 
-                // Handle the should_continue logic
-                var shouldContinue = result?.GetValueOrDefault("should_continue");
+                // Handle the should_continue logic with proper type conversion
+                var shouldContinueElement = result?.GetValueOrDefault("should_continue");
                 var reason = result?.GetValueOrDefault("reason")?.ToString() ?? "";
                 var followupText = result?.GetValueOrDefault("question")?.ToString() ?? "";
                 
-                if (shouldContinue != null && !Convert.ToBoolean(shouldContinue))
+                // Safely convert should_continue to boolean
+                bool shouldContinue = false;
+                if (shouldContinueElement != null)
+                {
+                    if (shouldContinueElement is bool boolValue)
+                    {
+                        shouldContinue = boolValue;
+                    }
+                    else if (shouldContinueElement is string stringValue)
+                    {
+                        shouldContinue = bool.TryParse(stringValue, out bool parsed) && parsed;
+                    }
+                    else
+                    {
+                        // Try to convert using JsonElement
+                        shouldContinue = shouldContinueElement.ToString().ToLower() == "true";
+                    }
+                }
+                
+                if (!shouldContinue)
                 {
                     // AI determined the answer is sufficient - move to next main question
                     // Find the next main question (no parent question)
@@ -638,6 +657,35 @@ namespace ClickView.Controllers
                         interview.FinishedAt = DateTime.Now;
                         await _db.SaveChangesAsync();
                         
+                        // Automatically analyze answers and generate summary
+                        try
+                        {
+                            // Generate AI summary
+                            var aiSummary = await _analysisService.AnalyzeInterviewAsync(interview.UserAnswers.ToList());
+                            
+                            // Generate feedback report if it doesn't exist
+                            var existingFeedback = _db.FeedbackReports.FirstOrDefault(f => f.InterviewId == interview.InterviewId);
+                            if (existingFeedback == null)
+                            {
+                                var feedbackDto = await _analysisService.GenerateFeedbackReportAsync(interview.UserAnswers.ToList());
+                                var feedbackReport = new FeedbackReport
+                                {
+                                    InterviewId = interview.InterviewId,
+                                    Strengths = feedbackDto.Strengths,
+                                    Weaknesses = feedbackDto.Weaknesses,
+                                    PersonalitySummary = feedbackDto.PersonalitySummary,
+                                    Recommendation = feedbackDto.Recommendation
+                                };
+                                _db.FeedbackReports.Add(feedbackReport);
+                                await _db.SaveChangesAsync();
+                            }
+                        }
+                        catch (Exception analysisEx)
+                        {
+                            // Log analysis error but don't fail the interview completion
+                            Console.WriteLine($"Error during interview analysis: {analysisEx.Message}");
+                        }
+                        
                         return Ok(new { 
                             should_continue = false, 
                             reason = reason,
@@ -646,7 +694,7 @@ namespace ClickView.Controllers
                         });
                     }
                 }
-                else if (shouldContinue != null && Convert.ToBoolean(shouldContinue) && !string.IsNullOrWhiteSpace(followupText))
+                else if (shouldContinue && !string.IsNullOrWhiteSpace(followupText))
                 {
                     // AI wants to continue with a follow-up question
                     var followupQuestion = new Question
@@ -755,12 +803,31 @@ namespace ClickView.Controllers
                 
                 var result = await response.Content.ReadFromJsonAsync<Dictionary<string, object>>();
                 
-                // Handle the should_continue logic
-                var shouldContinue = result?.GetValueOrDefault("should_continue");
+                // Handle the should_continue logic with proper type conversion
+                var shouldContinueElement = result?.GetValueOrDefault("should_continue");
                 var reason = result?.GetValueOrDefault("reason")?.ToString() ?? "";
                 var followupText = result?.GetValueOrDefault("question")?.ToString() ?? "";
                 
-                if (shouldContinue != null && !Convert.ToBoolean(shouldContinue))
+                // Safely convert should_continue to boolean
+                bool shouldContinue = false;
+                if (shouldContinueElement != null)
+                {
+                    if (shouldContinueElement is bool boolValue)
+                    {
+                        shouldContinue = boolValue;
+                    }
+                    else if (shouldContinueElement is string stringValue)
+                    {
+                        shouldContinue = bool.TryParse(stringValue, out bool parsed) && parsed;
+                    }
+                    else
+                    {
+                        // Try to convert using JsonElement
+                        shouldContinue = shouldContinueElement.ToString().ToLower() == "true";
+                    }
+                }
+                
+                if (!shouldContinue)
                 {
                     // AI determined the answer is sufficient - move to next main question
                     // Find the next main question (no parent question)
@@ -787,6 +854,35 @@ namespace ClickView.Controllers
                         interview.FinishedAt = DateTime.Now;
                         await _db.SaveChangesAsync();
                         
+                        // Automatically analyze answers and generate summary
+                        try
+                        {
+                            // Generate AI summary
+                            var aiSummary = await _analysisService.AnalyzeInterviewAsync(interview.UserAnswers.ToList());
+                            
+                            // Generate feedback report if it doesn't exist
+                            var existingFeedback = _db.FeedbackReports.FirstOrDefault(f => f.InterviewId == interview.InterviewId);
+                            if (existingFeedback == null)
+                            {
+                                var feedbackDto = await _analysisService.GenerateFeedbackReportAsync(interview.UserAnswers.ToList());
+                                var feedbackReport = new FeedbackReport
+                                {
+                                    InterviewId = interview.InterviewId,
+                                    Strengths = feedbackDto.Strengths,
+                                    Weaknesses = feedbackDto.Weaknesses,
+                                    PersonalitySummary = feedbackDto.PersonalitySummary,
+                                    Recommendation = feedbackDto.Recommendation
+                                };
+                                _db.FeedbackReports.Add(feedbackReport);
+                                await _db.SaveChangesAsync();
+                            }
+                        }
+                        catch (Exception analysisEx)
+                        {
+                            // Log analysis error but don't fail the interview completion
+                            Console.WriteLine($"Error during interview analysis: {analysisEx.Message}");
+                        }
+                        
                         return Ok(new { 
                             should_continue = false, 
                             reason = reason,
@@ -795,7 +891,7 @@ namespace ClickView.Controllers
                         });
                     }
                 }
-                else if (shouldContinue != null && Convert.ToBoolean(shouldContinue) && !string.IsNullOrWhiteSpace(followupText))
+                else if (shouldContinue && !string.IsNullOrWhiteSpace(followupText))
                 {
                     // AI wants to continue with a follow-up question
                     var followupQuestion = new Question
@@ -879,18 +975,96 @@ namespace ClickView.Controllers
         [HttpPost("{interviewId}/end")]
         public async Task<IActionResult> EndInterview(int interviewId)
         {
-            var interview = await _db.Interviews.FindAsync(interviewId);
+            var interview = await _db.Interviews
+                .Include(i => i.UserAnswers)
+                .ThenInclude(a => a.AnswerAnalysis)
+                .Include(i => i.Questions)
+                .FirstOrDefaultAsync(i => i.InterviewId == interviewId);
+                
             if (interview == null)
                 return NotFound("Interview not found.");
 
             if (interview.IsFinished)
-                return BadRequest("Interview is already finished.");
+            {
+                // Interview is already finished, return success instead of error
+                return Ok(new { 
+                    message = "Interview was already finished", 
+                    interviewId = interview.InterviewId, 
+                    finishedAt = interview.FinishedAt 
+                });
+            }
 
-            interview.IsFinished = true;
-            interview.FinishedAt = DateTime.Now;
-            await _db.SaveChangesAsync();
+            try
+            {
+                // Mark interview as finished
+                interview.IsFinished = true;
+                interview.FinishedAt = DateTime.Now;
+                await _db.SaveChangesAsync();
 
-            return Ok(new { message = "Interview ended successfully", interviewId = interview.InterviewId, finishedAt = interview.FinishedAt });
+                // Automatically analyze answers and generate summary if there are answers
+                if (interview.UserAnswers.Any())
+                {
+                    try
+                    {
+                        // Generate AI summary
+                        var aiSummary = await _analysisService.AnalyzeInterviewAsync(interview.UserAnswers.ToList());
+                        
+                        // Generate feedback report if it doesn't exist
+                        var existingFeedback = _db.FeedbackReports.FirstOrDefault(f => f.InterviewId == interviewId);
+                        if (existingFeedback == null)
+                        {
+                            var feedbackDto = await _analysisService.GenerateFeedbackReportAsync(interview.UserAnswers.ToList());
+                            var feedbackReport = new FeedbackReport
+                            {
+                                InterviewId = interviewId,
+                                Strengths = feedbackDto.Strengths,
+                                Weaknesses = feedbackDto.Weaknesses,
+                                PersonalitySummary = feedbackDto.PersonalitySummary,
+                                Recommendation = feedbackDto.Recommendation
+                            };
+                            _db.FeedbackReports.Add(feedbackReport);
+                            await _db.SaveChangesAsync();
+                        }
+
+                        return Ok(new { 
+                            message = "Interview ended successfully with analysis completed", 
+                            interviewId = interview.InterviewId, 
+                            finishedAt = interview.FinishedAt,
+                            analysisCompleted = true,
+                            aiSummary = aiSummary
+                        });
+                    }
+                    catch (Exception analysisEx)
+                    {
+                        // Log analysis error but don't fail the interview ending
+                        Console.WriteLine($"Error during interview analysis: {analysisEx.Message}");
+                        return Ok(new { 
+                            message = "Interview ended successfully (analysis failed)", 
+                            interviewId = interview.InterviewId, 
+                            finishedAt = interview.FinishedAt,
+                            analysisCompleted = false,
+                            analysisError = analysisEx.Message
+                        });
+                    }
+                }
+                else
+                {
+                    // No answers to analyze
+                    return Ok(new { 
+                        message = "Interview ended successfully (no answers to analyze)", 
+                        interviewId = interview.InterviewId, 
+                        finishedAt = interview.FinishedAt,
+                        analysisCompleted = false
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { 
+                    error = "Error ending interview", 
+                    details = ex.Message 
+                });
+            }
         }
 
         [HttpPost("check-expiration")]
