@@ -4,6 +4,7 @@ using ClickView.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace ClickView.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250613194346_AddCvEnhancement2")]
+    partial class AddCvEnhancement2
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -505,7 +508,7 @@ namespace ClickView.Migrations
             modelBuilder.Entity("ClickView.Models.CvEnhancement", b =>
                 {
                     b.HasOne("ClickView.Models.CV", "CV")
-                        .WithMany("Enhancements")
+                        .WithMany("CvEnhancements")
                         .HasForeignKey("CvId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -539,8 +542,7 @@ namespace ClickView.Migrations
                 {
                     b.HasOne("ClickView.Models.CV", "CV")
                         .WithMany("Interviews")
-                        .HasForeignKey("CvId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .HasForeignKey("CvId");
 
                     b.HasOne("ClickView.Models.User", "User")
                         .WithMany("Interviews")
@@ -607,7 +609,7 @@ namespace ClickView.Migrations
 
             modelBuilder.Entity("ClickView.Models.CV", b =>
                 {
-                    b.Navigation("Enhancements");
+                    b.Navigation("CvEnhancements");
 
                     b.Navigation("Insights");
 

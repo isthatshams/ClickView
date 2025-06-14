@@ -17,11 +17,23 @@ namespace ClickView.Controllers
     {
         private readonly ApplicationDbContext _db;
         private readonly AnswerAnalysisService _analysisService;
+        private readonly InterviewScoringService _scoringService;
 
-        public InterviewController(ApplicationDbContext db, AnswerAnalysisService analysisService)
+        public InterviewController(ApplicationDbContext db, AnswerAnalysisService analysisService, InterviewScoringService scoringService)
         {
             _db = db;
             _analysisService = analysisService;
+            _scoringService = scoringService;
+        }
+
+        // Helper method to check if all questions in an interview have been answered
+        private bool AreAllQuestionsAnswered(Interview interview)
+        {
+            var allQuestions = interview.Questions.ToList();
+            var answeredQuestions = interview.UserAnswers.Select(a => a.QuestionId).ToHashSet();
+            
+            // Check if every question has a corresponding answer
+            return allQuestions.All(q => answeredQuestions.Contains(q.QuestionId));
         }
 
         [HttpPost("start")]
@@ -152,6 +164,8 @@ namespace ClickView.Controllers
                     StartedAt = i.StartedAt.ToString("yyyy-MM-ddTHH:mm:ss.fff"), // Return local time format
                     FinishedAt = i.FinishedAt.HasValue ? i.FinishedAt.Value.ToString("yyyy-MM-ddTHH:mm:ss.fff") : null,
                     i.IsFinished,
+                    ScoreGrade = i.IsFinished ? _scoringService.GetScoreGrade(i.InterviewMark) : null,
+                    ScoreFeedback = i.IsFinished ? _scoringService.GetScoreFeedback(i.InterviewMark) : null,
                     Questions = i.Questions.Select(q => new
                     {
                         q.QuestionId,
@@ -198,6 +212,8 @@ namespace ClickView.Controllers
                     StartedAt = i.StartedAt.ToString("yyyy-MM-ddTHH:mm:ss.fff"), // Return local time format
                     FinishedAt = i.FinishedAt.HasValue ? i.FinishedAt.Value.ToString("yyyy-MM-ddTHH:mm:ss.fff") : null,
                     i.IsFinished,
+                    ScoreGrade = i.IsFinished ? _scoringService.GetScoreGrade(i.InterviewMark) : null,
+                    ScoreFeedback = i.IsFinished ? _scoringService.GetScoreFeedback(i.InterviewMark) : null,
                     QuestionCount = i.Questions.Count,
                     AnswerCount = i.UserAnswers.Count
                 })
@@ -652,46 +668,60 @@ namespace ClickView.Controllers
                     }
                     else
                     {
-                        // No more main questions - interview completed
-                        interview.IsFinished = true;
-                        interview.FinishedAt = DateTime.Now;
-                        await _db.SaveChangesAsync();
-                        
-                        // Automatically analyze answers and generate summary
-                        try
+                        // No more main questions - check if all questions are answered
+                        if (AreAllQuestionsAnswered(interview))
                         {
-                            // Generate AI summary
-                            var aiSummary = await _analysisService.AnalyzeInterviewAsync(interview.UserAnswers.ToList());
+                            // All questions answered - complete the interview
+                            interview.IsFinished = true;
+                            interview.FinishedAt = DateTime.Now;
+                            await _db.SaveChangesAsync();
                             
-                            // Generate feedback report if it doesn't exist
-                            var existingFeedback = _db.FeedbackReports.FirstOrDefault(f => f.InterviewId == interview.InterviewId);
-                            if (existingFeedback == null)
+                            // Automatically analyze answers and generate summary
+                            try
                             {
-                                var feedbackDto = await _analysisService.GenerateFeedbackReportAsync(interview.UserAnswers.ToList());
-                                var feedbackReport = new FeedbackReport
+                                // Generate AI summary
+                                var aiSummary = await _analysisService.AnalyzeInterviewAsync(interview.UserAnswers.ToList());
+                                
+                                // Generate feedback report if it doesn't exist
+                                var existingFeedback = _db.FeedbackReports.FirstOrDefault(f => f.InterviewId == interview.InterviewId);
+                                if (existingFeedback == null)
                                 {
-                                    InterviewId = interview.InterviewId,
-                                    Strengths = feedbackDto.Strengths,
-                                    Weaknesses = feedbackDto.Weaknesses,
-                                    PersonalitySummary = feedbackDto.PersonalitySummary,
-                                    Recommendation = feedbackDto.Recommendation
-                                };
-                                _db.FeedbackReports.Add(feedbackReport);
-                                await _db.SaveChangesAsync();
+                                    var feedbackDto = await _analysisService.GenerateFeedbackReportAsync(interview.UserAnswers.ToList());
+                                    var feedbackReport = new FeedbackReport
+                                    {
+                                        InterviewId = interview.InterviewId,
+                                        Strengths = feedbackDto.Strengths,
+                                        Weaknesses = feedbackDto.Weaknesses,
+                                        PersonalitySummary = feedbackDto.PersonalitySummary,
+                                        Recommendation = feedbackDto.Recommendation
+                                    };
+                                    _db.FeedbackReports.Add(feedbackReport);
+                                    await _db.SaveChangesAsync();
+                                }
                             }
+                            catch (Exception analysisEx)
+                            {
+                                // Log analysis error but don't fail the interview completion
+                                Console.WriteLine($"Error during interview analysis: {analysisEx.Message}");
+                            }
+                            
+                            return Ok(new { 
+                                should_continue = false, 
+                                reason = reason,
+                                message = "Interview completed - all questions answered satisfactorily.",
+                                interview_completed = true,
+                                farewell_message = "Thank you, you've completed all questions. We will review your answers."
+                            });
                         }
-                        catch (Exception analysisEx)
+                        else
                         {
-                            // Log analysis error but don't fail the interview completion
-                            Console.WriteLine($"Error during interview analysis: {analysisEx.Message}");
+                            // Not all questions answered - continue with follow-ups or next questions
+                            return Ok(new { 
+                                should_continue = false, 
+                                reason = "Answer accepted. Moving to next question.",
+                                message = "Answer accepted. Moving to next question."
+                            });
                         }
-                        
-                        return Ok(new { 
-                            should_continue = false, 
-                            reason = reason,
-                            message = "Interview completed - all questions answered satisfactorily.",
-                            interview_completed = true
-                        });
                     }
                 }
                 else if (shouldContinue && !string.IsNullOrWhiteSpace(followupText))
@@ -849,46 +879,60 @@ namespace ClickView.Controllers
                     }
                     else
                     {
-                        // No more main questions - interview completed
-                        interview.IsFinished = true;
-                        interview.FinishedAt = DateTime.Now;
-                        await _db.SaveChangesAsync();
-                        
-                        // Automatically analyze answers and generate summary
-                        try
+                        // No more main questions - check if all questions are answered
+                        if (AreAllQuestionsAnswered(interview))
                         {
-                            // Generate AI summary
-                            var aiSummary = await _analysisService.AnalyzeInterviewAsync(interview.UserAnswers.ToList());
+                            // All questions answered - complete the interview
+                            interview.IsFinished = true;
+                            interview.FinishedAt = DateTime.Now;
+                            await _db.SaveChangesAsync();
                             
-                            // Generate feedback report if it doesn't exist
-                            var existingFeedback = _db.FeedbackReports.FirstOrDefault(f => f.InterviewId == interview.InterviewId);
-                            if (existingFeedback == null)
+                            // Automatically analyze answers and generate summary
+                            try
                             {
-                                var feedbackDto = await _analysisService.GenerateFeedbackReportAsync(interview.UserAnswers.ToList());
-                                var feedbackReport = new FeedbackReport
+                                // Generate AI summary
+                                var aiSummary = await _analysisService.AnalyzeInterviewAsync(interview.UserAnswers.ToList());
+                                
+                                // Generate feedback report if it doesn't exist
+                                var existingFeedback = _db.FeedbackReports.FirstOrDefault(f => f.InterviewId == interview.InterviewId);
+                                if (existingFeedback == null)
                                 {
-                                    InterviewId = interview.InterviewId,
-                                    Strengths = feedbackDto.Strengths,
-                                    Weaknesses = feedbackDto.Weaknesses,
-                                    PersonalitySummary = feedbackDto.PersonalitySummary,
-                                    Recommendation = feedbackDto.Recommendation
-                                };
-                                _db.FeedbackReports.Add(feedbackReport);
-                                await _db.SaveChangesAsync();
+                                    var feedbackDto = await _analysisService.GenerateFeedbackReportAsync(interview.UserAnswers.ToList());
+                                    var feedbackReport = new FeedbackReport
+                                    {
+                                        InterviewId = interview.InterviewId,
+                                        Strengths = feedbackDto.Strengths,
+                                        Weaknesses = feedbackDto.Weaknesses,
+                                        PersonalitySummary = feedbackDto.PersonalitySummary,
+                                        Recommendation = feedbackDto.Recommendation
+                                    };
+                                    _db.FeedbackReports.Add(feedbackReport);
+                                    await _db.SaveChangesAsync();
+                                }
                             }
+                            catch (Exception analysisEx)
+                            {
+                                // Log analysis error but don't fail the interview completion
+                                Console.WriteLine($"Error during interview analysis: {analysisEx.Message}");
+                            }
+                            
+                            return Ok(new { 
+                                should_continue = false, 
+                                reason = reason,
+                                message = "Interview completed - all questions answered satisfactorily.",
+                                interview_completed = true,
+                                farewell_message = "Thank you, you've completed all questions. We will review your answers."
+                            });
                         }
-                        catch (Exception analysisEx)
+                        else
                         {
-                            // Log analysis error but don't fail the interview completion
-                            Console.WriteLine($"Error during interview analysis: {analysisEx.Message}");
+                            // Not all questions answered - continue with follow-ups or next questions
+                            return Ok(new { 
+                                should_continue = false, 
+                                reason = "Answer accepted. Moving to next question.",
+                                message = "Answer accepted. Moving to next question."
+                            });
                         }
-                        
-                        return Ok(new { 
-                            should_continue = false, 
-                            reason = reason,
-                            message = "Interview completed - all questions answered satisfactorily.",
-                            interview_completed = true
-                        });
                     }
                 }
                 else if (shouldContinue && !string.IsNullOrWhiteSpace(followupText))
@@ -947,29 +991,71 @@ namespace ClickView.Controllers
         [HttpGet("{interviewId}/feedback")]
         public async Task<IActionResult> GetInterviewFeedback(int interviewId)
         {
-            var interview = _db.Interviews
-                .Include(i => i.UserAnswers)
-                .ThenInclude(a => a.AnswerAnalysis)
-                .Include(i => i.Questions)
-                .FirstOrDefault(i => i.InterviewId == interviewId);
-            if (interview == null) return NotFound("Interview not found.");
-            // Check if feedback already exists
-            var existing = _db.FeedbackReports.FirstOrDefault(f => f.InterviewId == interviewId);
-            if (existing != null)
-                return Ok(existing);
-            // Generate feedback
-            var feedbackDto = await _analysisService.GenerateFeedbackReportAsync(interview.UserAnswers.ToList());
-            var report = new FeedbackReport
+            try
             {
-                InterviewId = interviewId,
-                Strengths = feedbackDto.Strengths,
-                Weaknesses = feedbackDto.Weaknesses,
-                PersonalitySummary = feedbackDto.PersonalitySummary,
-                Recommendation = feedbackDto.Recommendation
-            };
-            _db.FeedbackReports.Add(report);
-            await _db.SaveChangesAsync();
-            return Ok(report);
+                var interview = _db.Interviews
+                    .Include(i => i.UserAnswers)
+                    .ThenInclude(a => a.AnswerAnalysis)
+                    .Include(i => i.Questions)
+                    .FirstOrDefault(i => i.InterviewId == interviewId);
+                
+                if (interview == null) 
+                {
+                    Console.WriteLine($"Interview not found for ID: {interviewId}");
+                    return NotFound("Interview not found.");
+                }
+
+                // Check if feedback already exists
+                var existing = _db.FeedbackReports.FirstOrDefault(f => f.InterviewId == interviewId);
+                if (existing != null)
+                {
+                    Console.WriteLine($"Returning existing feedback for interview ID: {interviewId}");
+                    return Ok(existing);
+                }
+
+                // Check if there are any answers to analyze
+                if (!interview.UserAnswers.Any())
+                {
+                    Console.WriteLine($"No answers found for interview ID: {interviewId}");
+                    return BadRequest("No answers found to generate feedback from.");
+                }
+
+                Console.WriteLine($"Generating new feedback for interview ID: {interviewId} with {interview.UserAnswers.Count} answers");
+                
+                // Generate feedback
+                var feedbackDto = await _analysisService.GenerateFeedbackReportAsync(interview.UserAnswers.ToList());
+                
+                if (feedbackDto == null)
+                {
+                    Console.WriteLine($"Failed to generate feedback DTO for interview ID: {interviewId}");
+                    return StatusCode(500, new { error = "Failed to generate feedback report" });
+                }
+
+                var report = new FeedbackReport
+                {
+                    InterviewId = interviewId,
+                    Strengths = feedbackDto.Strengths ?? "No strengths identified",
+                    Weaknesses = feedbackDto.Weaknesses ?? "No weaknesses identified",
+                    PersonalitySummary = feedbackDto.PersonalitySummary ?? "No personality summary available",
+                    Recommendation = feedbackDto.Recommendation ?? "No recommendation available"
+                };
+
+                _db.FeedbackReports.Add(report);
+                await _db.SaveChangesAsync();
+                
+                Console.WriteLine($"Successfully created feedback report for interview ID: {interviewId}");
+                return Ok(report);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in GetInterviewFeedback for interview ID {interviewId}: {ex.Message}");
+                Console.WriteLine($"StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { 
+                    error = "Error generating feedback report", 
+                    details = ex.Message,
+                    interviewId = interviewId
+                });
+            }
         }
 
         [HttpPost("{interviewId}/end")]
@@ -990,7 +1076,8 @@ namespace ClickView.Controllers
                 return Ok(new { 
                     message = "Interview was already finished", 
                     interviewId = interview.InterviewId, 
-                    finishedAt = interview.FinishedAt 
+                    finishedAt = interview.FinishedAt,
+                    interviewMark = interview.InterviewMark
                 });
             }
 
@@ -999,6 +1086,24 @@ namespace ClickView.Controllers
                 // Mark interview as finished
                 interview.IsFinished = true;
                 interview.FinishedAt = DateTime.Now;
+
+                // Calculate interview score if there are answers
+                if (interview.UserAnswers.Any())
+                {
+                    try
+                    {
+                        var calculatedScore = await _scoringService.CalculateInterviewScoreAsync(interview);
+                        interview.InterviewMark = calculatedScore;
+                        
+                        Console.WriteLine($"Interview {interviewId} scored: {calculatedScore:F1}");
+                    }
+                    catch (Exception scoreEx)
+                    {
+                        Console.WriteLine($"Error calculating interview score: {scoreEx.Message}");
+                        // Continue without scoring if it fails
+                    }
+                }
+
                 await _db.SaveChangesAsync();
 
                 // Automatically analyze answers and generate summary if there are answers
@@ -1030,6 +1135,9 @@ namespace ClickView.Controllers
                             message = "Interview ended successfully with analysis completed", 
                             interviewId = interview.InterviewId, 
                             finishedAt = interview.FinishedAt,
+                            interviewMark = interview.InterviewMark,
+                            scoreGrade = _scoringService.GetScoreGrade(interview.InterviewMark),
+                            scoreFeedback = _scoringService.GetScoreFeedback(interview.InterviewMark),
                             analysisCompleted = true,
                             aiSummary = aiSummary
                         });
@@ -1042,6 +1150,9 @@ namespace ClickView.Controllers
                             message = "Interview ended successfully (analysis failed)", 
                             interviewId = interview.InterviewId, 
                             finishedAt = interview.FinishedAt,
+                            interviewMark = interview.InterviewMark,
+                            scoreGrade = _scoringService.GetScoreGrade(interview.InterviewMark),
+                            scoreFeedback = _scoringService.GetScoreFeedback(interview.InterviewMark),
                             analysisCompleted = false,
                             analysisError = analysisEx.Message
                         });
@@ -1054,6 +1165,9 @@ namespace ClickView.Controllers
                         message = "Interview ended successfully (no answers to analyze)", 
                         interviewId = interview.InterviewId, 
                         finishedAt = interview.FinishedAt,
+                        interviewMark = interview.InterviewMark,
+                        scoreGrade = _scoringService.GetScoreGrade(interview.InterviewMark),
+                        scoreFeedback = _scoringService.GetScoreFeedback(interview.InterviewMark),
                         analysisCompleted = false
                     });
                 }
@@ -1101,6 +1215,192 @@ namespace ClickView.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { error = "Error checking interview expiration", details = ex.Message });
+            }
+        }
+
+        [HttpGet("{interviewId}/score-breakdown")]
+        public async Task<IActionResult> GetInterviewScoreBreakdown(int interviewId)
+        {
+            try
+            {
+                var interview = await _db.Interviews
+                    .Include(i => i.UserAnswers)
+                    .ThenInclude(a => a.AnswerAnalysis)
+                    .Include(i => i.Questions)
+                    .FirstOrDefaultAsync(i => i.InterviewId == interviewId);
+
+                if (interview == null)
+                    return NotFound("Interview not found.");
+
+                if (!interview.IsFinished)
+                    return BadRequest("Interview is not finished yet.");
+
+                if (!interview.UserAnswers.Any())
+                    return BadRequest("No answers found for this interview.");
+
+                // Calculate score components
+                var completionScore = _scoringService.CalculateCompletionScore(interview);
+                var qualityScore = await _scoringService.CalculateAnswerQualityScoreAsync(interview);
+                var difficultyScore = _scoringService.CalculateDifficultyScore(interview);
+                var timeScore = _scoringService.CalculateTimeEfficiencyScore(interview);
+
+                var breakdown = new
+                {
+                    InterviewId = interviewId,
+                    TotalScore = interview.InterviewMark,
+                    Grade = _scoringService.GetScoreGrade(interview.InterviewMark),
+                    Feedback = _scoringService.GetScoreFeedback(interview.InterviewMark),
+                    ScoreComponents = new
+                    {
+                        Completion = new
+                        {
+                            Score = completionScore,
+                            Weight = 0.30,
+                            WeightedScore = completionScore * 0.30,
+                            Description = "Percentage of questions answered"
+                        },
+                        Quality = new
+                        {
+                            Score = qualityScore,
+                            Weight = 0.40,
+                            WeightedScore = qualityScore * 0.40,
+                            Description = "Average quality of answers based on length, tone, and personality traits"
+                        },
+                        Difficulty = new
+                        {
+                            Score = difficultyScore,
+                            Weight = 0.20,
+                            WeightedScore = difficultyScore * 0.20,
+                            Description = "Bonus for answering higher difficulty questions"
+                        },
+                        TimeEfficiency = new
+                        {
+                            Score = timeScore,
+                            Weight = 0.10,
+                            WeightedScore = timeScore * 0.10,
+                            Description = "Efficiency in completing the interview"
+                        }
+                    },
+                    InterviewDetails = new
+                    {
+                        TotalQuestions = interview.Questions.Count,
+                        AnsweredQuestions = interview.UserAnswers.Count,
+                        CompletionRate = (double)interview.UserAnswers.Count / interview.Questions.Count * 100,
+                        Duration = interview.FinishedAt.HasValue ? 
+                            (interview.FinishedAt.Value - interview.StartedAt).TotalMinutes : 0,
+                        AverageTimePerAnswer = interview.FinishedAt.HasValue && interview.UserAnswers.Count > 0 ?
+                            (interview.FinishedAt.Value - interview.StartedAt).TotalMinutes / interview.UserAnswers.Count : 0
+                    }
+                };
+
+                return Ok(breakdown);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting score breakdown for interview {interviewId}: {ex.Message}");
+                return StatusCode(500, new { error = "Error calculating score breakdown", details = ex.Message });
+            }
+        }
+
+        [HttpPost("calculate-missing-scores")]
+        public async Task<IActionResult> CalculateMissingScores()
+        {
+            try
+            {
+                // Find all completed interviews that have no score (InterviewMark = 0) but have answers
+                var interviewsToScore = await _db.Interviews
+                    .Include(i => i.UserAnswers)
+                    .ThenInclude(a => a.AnswerAnalysis)
+                    .Include(i => i.Questions)
+                    .Where(i => i.IsFinished && i.InterviewMark == 0 && i.UserAnswers.Any())
+                    .ToListAsync();
+
+                if (!interviewsToScore.Any())
+                {
+                    return Ok(new { 
+                        message = "No interviews found that need scoring", 
+                        processedCount = 0 
+                    });
+                }
+
+                var processedCount = 0;
+                var errors = new List<string>();
+
+                foreach (var interview in interviewsToScore)
+                {
+                    try
+                    {
+                        var calculatedScore = await _scoringService.CalculateInterviewScoreAsync(interview);
+                        interview.InterviewMark = calculatedScore;
+                        processedCount++;
+
+                        Console.WriteLine($"Calculated score for interview {interview.InterviewId}: {calculatedScore:F1}");
+                    }
+                    catch (Exception ex)
+                    {
+                        var errorMsg = $"Error calculating score for interview {interview.InterviewId}: {ex.Message}";
+                        errors.Add(errorMsg);
+                        Console.WriteLine(errorMsg);
+                    }
+                }
+
+                // Save all changes
+                await _db.SaveChangesAsync();
+
+                return Ok(new { 
+                    message = $"Successfully calculated scores for {processedCount} interviews",
+                    processedCount = processedCount,
+                    totalFound = interviewsToScore.Count,
+                    errors = errors
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { 
+                    error = "Error calculating missing scores", 
+                    details = ex.Message 
+                });
+            }
+        }
+
+        [HttpPost("calculate-score/{interviewId}")]
+        public async Task<IActionResult> CalculateScoreForInterview(int interviewId)
+        {
+            try
+            {
+                var interview = await _db.Interviews
+                    .Include(i => i.UserAnswers)
+                    .ThenInclude(a => a.AnswerAnalysis)
+                    .Include(i => i.Questions)
+                    .FirstOrDefaultAsync(i => i.InterviewId == interviewId);
+
+                if (interview == null)
+                    return NotFound("Interview not found.");
+
+                if (!interview.IsFinished)
+                    return BadRequest("Interview is not finished yet.");
+
+                if (!interview.UserAnswers.Any())
+                    return BadRequest("No answers found for this interview.");
+
+                var calculatedScore = await _scoringService.CalculateInterviewScoreAsync(interview);
+                interview.InterviewMark = calculatedScore;
+                await _db.SaveChangesAsync();
+
+                return Ok(new { 
+                    message = "Score calculated successfully",
+                    interviewId = interviewId,
+                    score = calculatedScore,
+                    grade = _scoringService.GetScoreGrade(calculatedScore),
+                    feedback = _scoringService.GetScoreFeedback(calculatedScore)
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { 
+                    error = "Error calculating score", 
+                    details = ex.Message 
+                });
             }
         }
     }

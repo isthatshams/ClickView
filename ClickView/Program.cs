@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,6 +38,7 @@ builder.Services.AddAuthentication(options =>
 
 builder.Services.AddScoped<AnswerAnalysisService>();
 builder.Services.AddScoped<CvEnhancerService>();
+builder.Services.AddScoped<InterviewScoringService>();
 builder.Services.AddHttpClient();
 
 // Add background services
@@ -46,6 +48,8 @@ builder.Services.AddHostedService<InterviewExpirationService>();
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
+        // prevent "possible object cycle" errors by ignoring back-references
+        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles;
         options.JsonSerializerOptions.PropertyNamingPolicy = null;
         options.JsonSerializerOptions.WriteIndented = true;
     });
